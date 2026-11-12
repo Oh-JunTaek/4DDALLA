@@ -9,14 +9,14 @@
 ## 2. 업무 시작 전에 읽을 문서
 
 1. `AGENTS.md`
-2. `PRODUCT_SPEC.md` — 사용자 정책 P-001~P-019
-3. `ARCHITECTURE.md` — 전체 구성과 서버/로컬 책임
-4. `DATA_MODEL.md` — 관계·무결성·이력
-5. `ENGINE_SPEC.md` — **공통 Enum과 모듈 계약**
-6. `DECISIONS.md` — 미정 공급자·검증 과제
+2. `Docs/PRODUCT_SPEC.md` — 사용자 정책 P-001~P-019
+3. `Docs/ARCHITECTURE.md` — 전체 구성과 서버/로컬 책임
+4. `Docs/DATA_MODEL.md` — 관계·무결성·이력
+5. `Docs/ENGINE_SPEC.md` — **공통 Enum과 모듈 계약**
+6. `Docs/DECISIONS.md` — 미정 공급자·검증 과제
 7. 현재 사용자 승인 티켓
 
-**문서 간 충돌을 발견하면 해당 작업을 멈추고 정확한 절·대안·영향을 보고한다.** 임의 결정 금지. 구 버전의 예시 JSON보다 현재 `ENGINE_SPEC.md`가 우선한다.
+**문서 간 충돌을 발견하면 해당 작업을 멈추고 정확한 절·대안·영향을 보고한다.** 임의 결정 금지. 구 버전의 예시 JSON보다 현재 `Docs/ENGINE_SPEC.md`가 우선한다.
 
 ## 3. 역할과 권한
 
