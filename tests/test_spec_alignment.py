@@ -7,11 +7,9 @@ so drift between code and contract cannot pass silently.
 
 from __future__ import annotations
 
-import importlib
-import io
 import re
 
-import app.contracts.enums as enums
+from app.contracts import enums
 
 SPEC_PATH = "Docs/ENGINE_SPEC.md"
 SECTION_2 = "## 2. 상태값 단일 기준"
@@ -21,7 +19,8 @@ _ENDPOINT_RE = re.compile(r"^\|\s*`(\w+)`\s*\|\s*(.+?)\s*\|\s*$")
 
 
 def _spec_enum_values() -> dict[str, set[str]]:
-    text = io.open(SPEC_PATH, encoding="utf-8").read()
+    with open(SPEC_PATH, encoding="utf-8") as handle:
+        text = handle.read()
     section = text.split(SECTION_2, 1)[1].split(SECTION_3, 1)[0]
     values: dict[str, set[str]] = {}
     for line in section.splitlines():
