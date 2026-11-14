@@ -19,7 +19,7 @@ def make_envelope() -> RunEnvelope:
         requested_at=now,
         execution_status=ExecutionStatus.SUCCESS,
         processed_at=now,
-        engine_version="0.1.0-bootstrap",
+        engine_version="0.1.0",
     )
 
 
@@ -40,7 +40,7 @@ def test_envelope_missing_required_field_rejected() -> None:
             requested_at=datetime.now(UTC),
             execution_status=ExecutionStatus.SUCCESS,
             processed_at=datetime.now(UTC),
-            engine_version="0.1.0-bootstrap",
+            engine_version="0.1.0",
         )
 
 
@@ -53,7 +53,7 @@ def test_envelope_non_uuid_rejected() -> None:
             requested_at=datetime.now(UTC),
             execution_status=ExecutionStatus.SUCCESS,
             processed_at=datetime.now(UTC),
-            engine_version="0.1.0-bootstrap",
+            engine_version="0.1.0",
         )
 
 
@@ -66,7 +66,7 @@ def test_envelope_bad_execution_status_rejected() -> None:
             requested_at=datetime.now(UTC),
             execution_status="SOME_UNKNOWN_STATE",
             processed_at=datetime.now(UTC),
-            engine_version="0.1.0-bootstrap",
+            engine_version="0.1.0",
         )
 
 
@@ -78,15 +78,15 @@ def _envelope_kwargs() -> dict[str, object]:
         "requested_at": datetime.now(UTC),
         "execution_status": ExecutionStatus.SUCCESS,
         "processed_at": datetime.now(UTC),
-        "engine_version": "0.1.0-bootstrap",
+        "engine_version": "0.1.0",
     }
 
 
 def _issue_kwargs() -> dict[str, object]:
     return {
         "event_id": uuid4(),
-        "job_id": None,
-        "run_id": None,
+        "job_id": uuid4(),
+        "run_id": uuid4(),
         "module": "test.module",
         "error_code": "TEST_ERROR",
         "severity": ErrorSeverity.MEDIUM,
@@ -98,13 +98,43 @@ def _issue_kwargs() -> dict[str, object]:
 
 
 def test_envelope_version_defaults_preserved() -> None:
-    # schema_version keeps its documented default ("1.0"); strict syntactic
-    # formats are not defined by ENGINE_SPEC.md and are not enforced here.
+    # schema_version keeps its default "1.0", which is a supported
+    # MAJOR.MINOR version; version strings are validated (P1-CONTRACT-02).
     envelope = RunEnvelope(**_envelope_kwargs())
     assert envelope.schema_version == "1.0"
     assert envelope.result_ref is None
     assert envelope.evidence_refs == []
     assert envelope.issues == []
+
+
+@pytest.mark.parametrize("version", ["0.9", "2.0", "1", "1.0.0", "abc", "", " 1.0"])
+def test_envelope_unsupported_or_malformed_schema_version_rejected(version: str) -> None:
+    # P1-CONTRACT-02: MAJOR.MINOR format, checked against supported versions.
+    kwargs = _envelope_kwargs()
+    kwargs["schema_version"] = version
+    with pytest.raises(ValidationError):
+        RunEnvelope(**kwargs)
+
+
+def test_envelope_supported_schema_version_accepted() -> None:
+    kwargs = _envelope_kwargs()
+    kwargs["schema_version"] = "1.0"
+    assert RunEnvelope(**kwargs).schema_version == "1.0"
+
+
+@pytest.mark.parametrize("version", ["0.1", "0.1.0.0", "0.1.0-bootstrap", "rc1", "0.1.0 ", "v0.1.0"])
+def test_envelope_malformed_engine_version_rejected(version: str) -> None:
+    # P1-CONTRACT-02: MAJOR.MINOR.PATCH format.
+    kwargs = _envelope_kwargs()
+    kwargs["engine_version"] = version
+    with pytest.raises(ValidationError):
+        RunEnvelope(**kwargs)
+
+
+def test_envelope_valid_engine_version_accepted() -> None:
+    kwargs = _envelope_kwargs()
+    kwargs["engine_version"] = "0.1.0"
+    assert RunEnvelope(**kwargs).engine_version == "0.1.0"
 
 
 def test_envelope_string_uuids_are_coerced() -> None:
@@ -116,7 +146,7 @@ def test_envelope_string_uuids_are_coerced() -> None:
         requested_at=datetime.now(UTC),
         execution_status=ExecutionStatus.SUCCESS,
         processed_at=datetime.now(UTC),
-        engine_version="0.1.0-bootstrap",
+        engine_version="0.1.0",
     )
     assert envelope.run_id == run_id
     assert envelope.job_id == job_id
@@ -159,10 +189,15 @@ def test_envelope_invalid_uuid_rejected(target: str) -> None:
         RunEnvelope(**kwargs)
 
 
-@pytest.mark.parametrize("bad_version", [1.5, "abc", None, [1]])
-def test_input_ref_non_integer_version_rejected(bad_version: object) -> None:
+@pytest.mark.parametrize("bad_version", [1.5, "abc", None, [1], True, 0, -1])
+def test_input_ref_version_rejected_values(bad_version: object) -> None:
+    # P1-CONTRACT-02: strict int, >= 1 (rejects bool/str/float/0/negative).
     with pytest.raises(ValidationError):
         InputRef(object_type="SOURCE_CONTENT_VERSION", object_id=uuid4(), version=bad_version)  # type: ignore[arg-type]
+
+
+def test_input_ref_version_accepts_positive_int() -> None:
+    assert InputRef(object_type="SOURCE_CONTENT_VERSION", object_id=uuid4(), version=1).version == 1
 
 
 @pytest.mark.parametrize("field", ["requested_at", "processed_at"])
@@ -195,13 +230,17 @@ def test_envelope_default_lists_are_not_shared() -> None:
     assert first.issues is not second.issues
 
 
-def test_envelope_unknown_fields_ignored_by_default() -> None:
-    # Current (Pydantic default) policy: unknown fields are ignored. The
-    # intended policy is not documented in ENGINE_SPEC.md; recorded as
-    # undecided rather than changed here.
-    envelope = RunEnvelope.model_validate({**_envelope_kwargs(), "future_field": "x"})
-    assert "future_field" not in envelope.model_fields_set
-    assert "future_field" not in envelope.model_dump()
+def test_envelope_unknown_fields_forbidden() -> None:
+    # P1-CONTRACT-02: official engine input/output contracts reject unknown
+    # fields (extra="forbid") instead of silently ignoring them.
+    with pytest.raises(ValidationError):
+        RunEnvelope.model_validate({**_envelope_kwargs(), "future_field": "x"})
+    with pytest.raises(ValidationError):
+        RunEnvelope(**_envelope_kwargs(), future_field="x")  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        InputRef(object_type="SOURCE_CONTENT_VERSION", object_id=uuid4(), version=1, extra="x")  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        ExecutionIssue(**_issue_kwargs(), unexpected=1)  # type: ignore[call-arg]
 
 
 def test_envelope_json_roundtrip() -> None:
@@ -217,11 +256,31 @@ def test_envelope_json_roundtrip() -> None:
 
 
 def test_execution_issue_valid_construction() -> None:
-    issue = ExecutionIssue(**_issue_kwargs())
-    assert issue.job_id is None
-    assert issue.run_id is None
+    kwargs = _issue_kwargs()
+    issue = ExecutionIssue(**kwargs)
+    assert issue.job_id == kwargs["job_id"]
+    assert issue.run_id == kwargs["run_id"]
     assert issue.severity is ErrorSeverity.MEDIUM
     assert issue.redacted_context == {"safe": "value"}
+
+
+@pytest.mark.parametrize("value", [{"items": [1, "a", True, None, 2.5]}, {"nested": {"k": []}}, {}, {"n": 1.5}])
+def test_execution_issue_redacted_context_json_compatible_accepted(value: object) -> None:
+    # P1-CONTRACT-02: redacted_context accepts JSON-compatible data only.
+    kwargs = _issue_kwargs()
+    kwargs["redacted_context"] = value
+    assert ExecutionIssue(**kwargs).redacted_context == value  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [{"bad": {1, 2}}, {"bad": float("nan")}, {"bad": float("inf")}, {"bad": datetime(2026, 11, 11)}, {"bad": object()}],
+)
+def test_execution_issue_redacted_context_non_json_rejected(value: object) -> None:
+    kwargs = _issue_kwargs()
+    kwargs["redacted_context"] = value
+    with pytest.raises(ValidationError):
+        ExecutionIssue(**kwargs)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
