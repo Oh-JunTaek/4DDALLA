@@ -1,12 +1,12 @@
 # 4 DDALLA — Session Handoff
 
-- Status: HANDOFF v6 (P1-DB-02B 라이브 DB 통합 테스트·Alembic 온라인 검증·마무리 완료 / 로컬 커밋)
+- Status: HANDOFF v7 (P1-DB-02B 라이브 검증·마무리 완료·로컬 커밋 / P1-DB-HARDEN-01 인계 — 읽기 전용 분석까지, 구현 미착수)
 - 원칙: 짧고 정확한 사실만 기록. 확인되지 않은 정보는 `미확인`으로 표기. API 키·비밀정보·개인정보 기록 금지. 실제 Git 상태와 다르면 실제 상태를 재확인하고 차이를 보고한다.
 
 ## A. 프로젝트 개요
 
 - 서비스: 4 DDALLA(사딸라) — 대한민국 음식점·카페·베이커리의 공식 할인·혜택을 발견·검증해 지도/목록으로 제공하는 반응형 웹. 최초 실증 성남시 분당구 서현역, 기본 반경 800m·선택 1km.
-- 현재 단계: P0 설계 기준선 + P1 기초 계약/부트스트랩 구현 완료(로컬). GIT-REORG-01(세션 복구·Git 운영 정리) 완료. P1-DB-01 환경 진단(읽기 전용) 후 P1-DB-01B로 로컬 개발 DB(PostgreSQL 17+PostGIS 3.7) 구축 완료. 이어서 P1-DB-02(앱–DB 연결·마이그레이션 기반) 구현·로컬 커밋, P1-DB-02B로 라이브 DB 통합 테스트·Alembic 온라인 검증·마무리 완료(2026-11-16, 로컬; 엔진 재기동 포함 — 데이터 볼륨 무변경).
+- 현재 단계: P0 설계 기준선 + P1 기초 계약/부트스트랩 구현 완료(로컬). GIT-REORG-01(세션 복구·Git 운영 정리) 완료. P1-DB-01 환경 진단(읽기 전용) 후 P1-DB-01B로 로컬 개발 DB(PostgreSQL 17+PostGIS 3.7) 구축 완료. 이어서 P1-DB-02(앱–DB 연결·마이그레이션 기반) 구현·로컬 커밋, P1-DB-02B로 라이브 DB 통합 테스트·Alembic 온라인 검증·마무리 완료(2026-11-16, 로컬; 엔진 재기동 포함 — 데이터 볼륨 무변경). 이후 P1-DB-HARDEN-01(코드 리뷰 후속) 지시 접수·읽기 전용 분석 완료 — 코드 미변경, §K 인계.
 - 기술 스택(설계 기준선): Frontend React + TypeScript + Vite / Backend Python + FastAPI + Pydantic / DB PostgreSQL + PostGIS / 백그라운드 PostgreSQL 작업 큐 + Python 워커. OCR·LLM·지도/장소·호스팅 공급자는 미정(DECISIONS OPEN-001~011). 개발 에이전트 OpenCode + EXAONE 2.5(런타임 OCR/LLM과 별개).
 
 ## B. 문서 기준선(유효·우선순위)
@@ -98,9 +98,30 @@
 
 ## J. 다음 세션 지시(우선 순서)
 
-1. `AGENTS.md` 읽기 → 2. 본 `Docs/HANDOFF.md` 읽기 → 3. 해당 명세 읽기 → 4. 실제 상태 재확인: `git status --short`, `git branch -avv`, `git log --oneline -5`, `git rev-parse develop main origin/main`, `git ls-remote --heads origin` — HANDOFF와 다르면 실제 상태 기준 갱신·차이 보고(원격 develop 변동 주체·시점 미확인 — 필요 시 사용자 확인) → 5. 다음 작업은 **현재 사용자 승인 티켓 지시 우선**(도메인 스키마/모델·수집·OCR·LLM·지도 연동은 별도 승인·설계 필요; DB 연결·세션·에러 처리·Alembic 이력·테스트 기반은 P1-DB-02/02B로 준비됨) → 6. 라이브 DB 재검증 절차(필요 시): Docker Desktop 미가동이면 설치·재설치 금지·사용자 기동 요청 후 중단; 엔진 접속 확인 후 `4ddalla-db` 정지 시 `docker start 4ddalla-db`; `DATABASE_URL`은 로컬 `docker/.env` 유래로만 사용(값 비기록·문서/커밋/셸 이력 노출 회피); 강제 실행 `.venv\Scripts\python.exe -m pytest tests/test_db_layer.py -v`(DB 검증 모드 — 환경변수 누락/연결 실패는 skip 아님, 실패/미완으로 보고); Alembic `current`→`upgrade head`→표·버전 확인→`downgrade base`→재적용 확인; 보호 파일 `ses1`·`Docs/draft.md` 불변; 원격 push/PR/merge/deploy 금지.
+1. `AGENTS.md` 읽기 → 2. 본 `Docs/HANDOFF.md` 읽기 → 3. 해당 명세 읽기 → 4. 실제 상태 재확인: `git status --short`, `git branch -avv`, `git log --oneline -5`, `git rev-parse develop main origin/main`, `git ls-remote --heads origin` — HANDOFF와 다르면 실제 상태 기준 갱신·차이 보고(원격 develop 변동 주체·시점 미확인 — 필요 시 사용자 확인) → 5. 다음 작업은 **현재 사용자 승인 티켓 지시 우선** — 현재 인계: P1-DB-HARDEN-01(§K, P0 마이그레이션 테스트 격리부터) → 6. 라이브 DB 재검증 절차(필요 시): Docker Desktop 미가동이면 설치·재설치 금지·사용자 기동 요청 후 중단; 엔진 접속 확인 후 `4ddalla-db` 정지 시 `docker start 4ddalla-db`; `DATABASE_URL`은 로컬 `docker/.env` 유래로만 사용(값 비기록·문서/커밋/셸 이력 노출 회피); 강제 실행 `.venv\Scripts\python.exe -m pytest tests/test_db_layer.py -v`(DB 검증 모드 — 환경변수 누락/연결 실패는 skip 아님, 실패/미완으로 보고); Alembic `current`→`upgrade head`→표·버전 확인→`downgrade base`→재적용 확인; 보호 파일 `ses1`·`Docs/draft.md` 불변; 원격 push/PR/merge/deploy 금지.
 
-## K. 최종 갱신
+## K. P1-DB-HARDEN-01 — 인계(분석 완료, 구현 미착수)
+
+지시 접수(2026-11-16): P1-DATA-01 전 코드 리뷰 후속. ①(P0) 마이그레이션 왕복 테스트 격리 ②(P1) 실제 FastAPI 엔드포인트 오류 처리·구분·비노출 ③ 운영 안정성(컴포즈 healthcheck·테스트 명령 분리·sessionmaker 검토·001 후속 제거 문서화) ④검증. 도메인 테이블 신규 생성 없음. develop 작업·로컬 커밋·핸드오프 갱신·보호 파일(ses1·Docs/draft.md) 준수·push/PR/병합/deploy 금지.
+
+읽기 전용 분석 결과(사실):
+- `tests/test_db_layer.py`: `TestLiveDatabase` 클래스 레벨 `skipif(not DATABASE_URL)`; 왕복 테스트가 `get_database_url()` 대상에 `command.upgrade/downgrade` 실행 — DATABASE_URL이 일반 개발 DB를 가리키면 그 DB에 downgrade base가 실행되는 현행 구조(이번 P0의 직접 대상).
+- `app/db/dependencies.py`: `get_db`가 요청마다 `sessionmaker(...)(...)` 생성(Engine은 캐시) — "불필요한 반복 생성" 검토 대상.
+- `app/main.py`: 현재 라우트는 `/health`뿐 — P1의 "실제 엔드포인트에서 연결 실패" 시험용 라우트/방식 미결정(옵션: 테스트 전용 라우트 추가, 기존 구조 활용, dependency override — 결정 필요, 기록만).
+- `docker/compose.yaml`: db 서비스 healthcheck 없음; 자격값은 `docker/.env` 유래.
+- Alembic 이력: `001` 단일 root(검증용 프로브 표). P1-DB-02B 중 로컬 dev DB에 001 적용됐던 상태(데이터·볼륨 무변경; 검증 표 잔존 — 정리 여부는 후속 판단).
+- DB 역할 `4ddalla`: superuser·CREATEDB 보유(서버 내 스크래치 DB 생성 가능 — 격리 실행 경로 후보; 최소권한 정비는 후속 과제).
+- 도구 확인: SQLAlchemy `URL.render_as_string(hide_password=True)` 존재('***' 마스킹; `False`면 평문 노출 — 출력 금지 원칙 유지). `docker compose config`에 `--no-interpolate`·`--no-env-resolution` 있음(변수 비추출 검증 후보; 이번엔 --help 확인만).
+- 로컬 헬퍼(비커밋·세션 로컬): `%LOCALAPPDATA%\Temp\opencode\run_with_db_env.py` — docker/.env(POSTGRES_USER/PASSWORD/DB)로 URL 조립·주입, 값 비출력.
+
+설계 방향(미구현·미검증 — 다음 세션 착수점):
+- P0: ①왕복 테스트를 기본 실행 경로에서 분리(명시적 opt-in 게이트; 일반 `pytest`/CI는 DB-free 유지) ②대상은 명시 허용목록+파싱된 URL 성분(engine·host·port·dbname) 검증 통과 시에만 사용 — 이름만으로 안전성 판정 금지 ③실행 시 4ddalla CREATEDB로 고유 스크래치 DB 생성→업그레이드/다운그레이드/재적용 검증→정리(실패 시에도 정리 보장) ④부정 검증: 가드가 일반 개발/미지정 대상의 실행을 거부함을 시험(연결·마이그레이션 미실행 확인). 불일치/미설정은 skip이 아니라 실패로 드러나게.
+- P1: 연결 계열 오류(OperationalError 등)→503 경로, 그 외 SQLAlchemyError(예: 제약 위반)→기본 500 계열 구분(현 핸들러는 DatabaseUnavailableError·DatabaseConfigurationError만 매핑). 응답·로그 비노출+rollback/close 유지. 엔드포인트 시험 방식 결정 필요(위 항목).
+- ③: healthcheck(`pg_isready`, 변수 이스케이프 `$$` 주의), 테스트 명령 분리 문서화(기본 DB-free / DB 검증 명시 명령; CI 무변경 유지), sessionmaker 검토(캐시 Engine 바인딩 상수 등 관례 대비), `001` 제거는 "서비스 마이그레이션 추가 후 별도 후속 마이그레이션으로 드롭" 안 문서 제안만(임의 삭제·이력 재작성 금지 — 제품 결정 필요).
+- 제약: 로컬 개발 DB만(운영·타 프로젝트 금지), 볼륨·기존 데이터·이력 보호, `docker/.env` 값 비기록, 보호 파일 불변.
+
+## L. 최종 갱신
 
 - 갱신: 2026-11-16 — P1-DB-02B 완료: 라이브 통합 테스트 15 passed(라이브 4건 포함)·Alembic 온라인 왕복 검증·설정 보강(1a7af5a)·본 핸드오프 갱신(커밋 해시는 작업 보고 참조). 원격 `develop` = d385ddd 재확인 — 직전 턴(9b937e8) 대비 변동, 주체·시점 미확인(사용자 확인 권장). 핸드오프에 비밀정보 기록 금지 준수 — `.env` 실제 값 미기재.
+- 갱신: 2026-11-16 — P1-DB-HARDEN-01 접수·읽기 전용 분석(코드 무변경, 커밋 없음): 현행 왕복 테스트 구조·핸들러 범위·compose·역할 권한 등 사실 기록과 격리/오류구분/운영 항목 **설계 방향**만 §K에 인계.
 - 본 갱신은 develop 로컬 커밋으로 반영(커밋 해시는 작업 보고에 명시). 핸드오프에 비밀정보 기록 금지 준수 — `.env` 실제 값 미기재.
