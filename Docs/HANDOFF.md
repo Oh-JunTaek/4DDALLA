@@ -23,7 +23,7 @@
 
 ## C. 실제 Git 상태(2026-11-15 로컬 확인)
 
-- 로컬 브랜치: `main` = d205bbd(변경 없음), `develop` = 5fac38e(P1-DB-02) + a3d1d4b(핸드오프 v4) + 0bc8f61 + 4a38fe4. HEAD = develop.
+- 로컬 브랜치: `main` = d205bbd(변경 없음). `develop` = 9b937e8(원격 동일) + 로컬 선행 4커밋: 0bc8f61·a3d1d4b(핸드오프 v4)·5fac38e(P1-DB-02)·40d38db(핸드오프 v5). HEAD = develop. (4a38fe4는 9b937e8의 조상.)
 - 원격: `origin/main` = d205bbd, `origin/develop` = 9b937e8, `origin/HEAD` → origin/main. 2026-11-16 재확인 — 변동 없음. ※핸드오프 v1의 "원격 develop 없음" 기재와 불일치 — 2026-11-15 확인 시점에 이미 존재. ※**4a38fe4→9b937e8 변동은 이전 턴(P1-DB-01B) 중 `ls-remote`로 확인** — 우리 명령 중 push 없음(외부 요인 추정, 주체·시점 미확인; fetch로 트래킹만 갱신, 삭제·변경 시도 없음).
 - 원격 feature 브랜치 3개(`feature/P1-01-bootstrap`, `feature/P1-CONTRACT-01`, `feature/P1-CONTRACT-02`)는 이번 작업에서 삭제 완료(존재·main 포함 관계 선확인 후). `docs/DOC-001-baseline`은 원격 ref 없음(로컬만 존재→삭제).
 - 로컬 삭제 브랜치 tip(e46e01d, 6f506b2, b43cbb9, 563e1e6) 모두 main 조상임을 `merge-base --is-ancestor`로 확인 → 커밋/파일 내용 main에 보존. develop은 d205bbd + 문서 커밋들(4a38fe4, 9b937e8, 본 갱신)만큼 앞서며 코드 차이 없음(커밋 stat으로 확인).
