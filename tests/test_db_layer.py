@@ -31,17 +31,30 @@ import uuid
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
+import psycopg
 import pytest
 from alembic.config import Config
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import URL, inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import (
+    DisconnectionError,
+    IntegrityError,
+    ProgrammingError,
+    SQLAlchemyError,
+)
+from sqlalchemy.exc import (
+    OperationalError as SqlAlchemyOperationalError,
+)
+from sqlalchemy.exc import (
+    TimeoutError as SqlAlchemyTimeoutError,
+)
 from sqlalchemy.orm import Session
 
 from alembic import command
 from app.db.config import get_database_url
 from app.db.dependencies import (
+    _is_connection_failure,
     database_configuration_handler,
     database_unavailable_handler,
     get_db,
@@ -97,6 +110,17 @@ def isolation_mode_enabled(env: Mapping[str, str] | None = None) -> bool | None:
     raise IsolatedTargetError(
         f"{_ISOLATION_ENV} has unrecognized value; use 1/true/yes/on or 0/false/no/off"
     )
+
+
+def _skip_isolated_migration(env: Mapping[str, str] | None = None) -> bool:
+    """Skip condition for the isolated-migration tests (resolved eagerly).
+
+    pytest evaluates ``skipif`` conditions with ``bool()``; a lambda condition
+    would be truthy no matter what the opt-in says, skipping the verification
+    even when enabled (and silently ignoring an unrecognized value). Invalid
+    values still raise ``IsolatedTargetError`` -- an explicit collection failure.
+    """
+    return isolation_mode_enabled(env) is not True
 
 
 def plan_isolated_target(database_url: str, *, enabled: bool) -> tuple[URL, str]:
@@ -166,11 +190,16 @@ def _isolated_roundtrip(database_url: str, monkeypatch: pytest.MonkeyPatch) -> s
         with maintenance_engine.connect() as connection:
             connection = connection.execution_options(isolation_level="AUTOCOMMIT")
             connection.execute(text(f'CREATE DATABASE "{scratch}"'))
-        monkeypatch.setenv("DATABASE_URL", str(server_url.set(database=scratch)))
+        target_url = server_url.set(database=scratch)
+        monkeypatch.setenv("DATABASE_URL", str(target_url))
+        # the URL actually in force must be the scratch database -- the
+        # configured general database is only used as the server anchor
+        assert get_database_url().endswith(f"/{scratch}")
         config = Config(str(PROJECT_ROOT / "alembic.ini"))
         command.upgrade(config, "head")
-        inspector_engine = create_db_engine(server_url.set(database=scratch))
+        inspector_engine = create_db_engine(target_url)
         try:
+            assert inspector_engine.url.database == scratch
             assert inspect(inspector_engine).has_table("p1db02_migration_probe")
         finally:
             inspector_engine.dispose()
@@ -293,6 +322,36 @@ def test_failure_does_not_log_credentials(caplog: pytest.LogCaptureFixture) -> N
     assert leaked == []
 
 
+# --- Connection-failure classification (P1-DB-HARDEN-01 2nd review) ------------
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        SqlAlchemyOperationalError("SELECT 1", {}, Exception("connection refused")),
+        DisconnectionError("connection invalidated"),
+        SqlAlchemyTimeoutError("pool timed out"),
+        psycopg.OperationalError("connection refused"),
+    ],
+)
+def test_connection_failures_are_recognized(exc: Exception) -> None:
+    """Only connection-class failures normalize to DatabaseUnavailableError."""
+    assert _is_connection_failure(exc) is True
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        IntegrityError("INSERT", {}, Exception("duplicate key")),
+        ProgrammingError("SELECT", {}, Exception("syntax error")),
+        SQLAlchemyError("generic database error"),
+    ],
+)
+def test_non_connection_errors_are_not_unavailable(exc: Exception) -> None:
+    """Constraints / query errors / unknowns must not be reported as outage (503)."""
+    assert _is_connection_failure(exc) is False
+
+
 def test_session_create_and_close(monkeypatch: pytest.MonkeyPatch) -> None:
     # Session creation binds the Engine; it does not connect, so this runs
     # without a live server.
@@ -385,6 +444,29 @@ def test_guard_generates_unique_scratch_name() -> None:
     assert scratch != other_scratch
 
 
+@pytest.mark.parametrize(
+    "env,expected",
+    [
+        ({}, True),
+        ({_ISOLATION_ENV: ""}, True),
+        ({_ISOLATION_ENV: "0"}, True),
+        ({_ISOLATION_ENV: "false"}, True),
+        ({_ISOLATION_ENV: "1"}, False),
+        ({_ISOLATION_ENV: "yes"}, False),
+        ({_ISOLATION_ENV: " on "}, False),
+    ],
+)
+def test_skip_condition_follows_opt_in(env: Mapping[str, str], expected: bool) -> None:
+    """Enabled -> runnable condition (False); unset/explicitly off -> skip (True)."""
+    assert _skip_isolated_migration(env) is expected
+
+
+def test_skip_condition_rejects_unrecognized_value() -> None:
+    """A typo in the verification switch fails loudly, never silently skips."""
+    with pytest.raises(IsolatedTargetError):
+        _skip_isolated_migration({_ISOLATION_ENV: "maybe"})
+
+
 def test_endpoint_non_connection_sqlaerror_is_not_503() -> None:
     client = TestClient(_make_probe_app(), raise_server_exceptions=False)
     response = client.get("/db_probe_synthetic")
@@ -392,6 +474,38 @@ def test_endpoint_non_connection_sqlaerror_is_not_503() -> None:
     assert response.status_code != 503
     assert "synthetic failure" not in response.text
     assert "database unavailable" not in response.text
+
+
+def test_endpoint_connection_failure_is_static_503(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Real FastAPI request against an unreachable endpoint -> static 503.
+
+    No live DB needed: proves the request path normalizes connection failures to
+    DatabaseUnavailableError (never a raw SQLAlchemy/psycopg exception), keeps
+    the response and application logs free of URL/credential material, and
+    returns the pooled connection.
+    """
+    monkeypatch.setenv("DATABASE_URL", _UNREACHABLE_URL)
+    engine = get_engine()
+    try:
+        client = TestClient(_make_probe_app(), raise_server_exceptions=False)
+        with caplog.at_level(logging.DEBUG):
+            response = client.get("/db_probe")
+        assert response.status_code == 503  # not 500: known failure class
+        assert response.json() == {"detail": "database unavailable"}
+        assert "test:test" not in response.text
+        assert "postgresql+psycopg" not in response.text
+        assert "127.0.0.1" not in response.text
+        leaked = [
+            record
+            for record in caplog.records
+            if "test:test" in record.getMessage() or "postgresql+psycopg" in record.getMessage()
+        ]
+        assert leaked == []
+        assert engine.pool.checkedout() == 0
+    finally:
+        engine.dispose()
 
 
 # --- Requires DATABASE_URL (skipped when unset, e.g. CI without a DB) --------
@@ -516,7 +630,7 @@ class TestLiveDatabase:
             engine.dispose()
 
     @pytest.mark.skipif(
-        lambda: isolation_mode_enabled() is not True,
+        _skip_isolated_migration(),
         reason=(
             "isolated-migration verification not enabled "
             "(DDALLA_TEST_ISOLATED_MIGRATION_DB=1; default run stays DB-free)"
@@ -529,7 +643,7 @@ class TestLiveDatabase:
         assert scratch.startswith(_SCRATCH_PREFIX)
 
     @pytest.mark.skipif(
-        lambda: isolation_mode_enabled() is not True,
+        _skip_isolated_migration(),
         reason=(
             "isolated-migration verification not enabled "
             "(DDALLA_TEST_ISOLATED_MIGRATION_DB=1; default run stays DB-free)"
