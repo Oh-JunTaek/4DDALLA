@@ -23,11 +23,11 @@
 
 ## C. 실제 Git 상태(2026-11-18 로컬 확인·원격 재확인)
 
-- 로컬 브랜치: `main` = d205bbd(변경 없음). `develop` = 9b937e8 + 로컬 커밋: 4a38fe4(GIT-REORG-01 문서)·0bc8f61·a3d1d4b(핸드오프 v4)·5fac38e(P1-DB-02)·40d38db(핸드오프 v5)·d385ddd(핸드오프 v5 계보 보정)·1a7af5a(Alembic path_separator)·65f30e3(핸드오프 v7)·6121953(P1-DB-HARDEN-01 ①·②)·2e87668(핸드오프 v8)·6c83a71(③ compose)·b216e8d(③ LOCAL_DEV)·284150f(핸드오프 v9)·8edd333(2차 리뷰 ② 소스)·c3fd0e6(2차 리뷰 ①·테스트)·1a438e5(핸드오프 v10)·59fe67b(핸드오프 v11)·77140e0(P1-DB-HARDEN-02 ② 소스)·4dcf7ae(P1-DB-HARDEN-02 ①·테스트). HEAD = develop.
+- 로컬 브랜치: `main` = d205bbd(변경 없음). `develop` = 9b937e8 + 로컬 커밋: 4a38fe4(GIT-REORG-01 문서)·0bc8f61·a3d1d4b(핸드오프 v4)·5fac38e(P1-DB-02)·40d38db(핸드오프 v5)·d385ddd(핸드오프 v5 계보 보정)·1a7af5a(Alembic path_separator)·65f30e3(핸드오프 v7)·6121953(P1-DB-HARDEN-01 ①·②)·2e87668(핸드오프 v8)·6c83a71(③ compose)·b216e8d(③ LOCAL_DEV)·284150f(핸드오프 v9)·8edd333(2차 리뷰 ② 소스)·c3fd0e6(2차 리뷰 ①·테스트)·1a438e5(핸드오프 v10)·59fe67b(핸드오프 v11)·77140e0(P1-DB-HARDEN-02 ② 소스)·4dcf7ae(P1-DB-HARDEN-02 ①·테스트)·b1e2db0(핸드오프 v12). HEAD = develop.
 - 원격: `origin/main` = d205bbd, `origin/develop` = **59fe67b**, `origin/HEAD` → origin/main (2026-11-18 읽기 전용 `ls-remote` 재확인; 이 세션 push·fetch·원격 쓰기 없음). 59fe67b는 로컬 핸드오프 v11 커밋과 동일 객체. 관찰값 순차 9b937e8 → d385ddd → 65f30e3 → 284150f → 1a438e5 → 59fe67b — 현재 로컬이 그 뒤 2커밋(77140e0·4dcf7ae) 앞섬. 진전 경로·시점 미확인(외부 요인 단정 안 함) → 사용자 확인 권장·임의 정리 금지. ※핸드오프 v1의 "원격 develop 없음" 기재와 불일치 — 2026-11-15 확인 시점에 이미 존재. ※4a38fe4→9b937e8 변동은 이전 턴(P1-DB-01B) 관찰.
 - 원격 feature 브랜치 3개(`feature/P1-01-bootstrap`, `feature/P1-CONTRACT-01`, `feature/P1-CONTRACT-02`)는 이번 작업에서 삭제 완료(존재·main 포함 관계 선확인 후). `docs/DOC-001-baseline`은 원격 ref 없음(로컬만 존재→삭제).
 - 로컬 삭제 브랜치 tip(e46e01d, 6f506b2, b43cbb9, 563e1e6) 모두 main 조상임을 `merge-base --is-ancestor`로 확인 → 커밋/파일 내용 main에 보존. develop의 main(d205bbd) 대비 진전: 문서·P1-DB 시리즈·핸드오프 커밋(상세 §D·§L).
-- 커밋(1a438e5) 후 작업트리: 추적 파일 변경·삭제 없음(로컬 확인). 로컬 develop = origin/develop(1a438e5 — 로컬 원격추적 참조·2026-11-18 `ls-remote` 일치). 미추적 파일(변경·삭제·추적 금지): `Docs/draft.md`(이전 세션 발견, 보호 대상·미수정). `ses1`(1,434,427B, 2026-11-14 12:47) — 사용자 확인: 세션 대화 백업(민감정보 포함 가능) → 원문 비출력 원칙, 삭제·이동·추적 금지(별도 승인 전).
+- 커밋(b1e2db0) 후 작업트리: 추적 파일 변경·삭제 없음(로컬 확인). 로컬 develop = origin/develop 대비 3커밋 앞섬(원격 59fe67b; 로컬 원격추적 ref도 59fe67b 기준 정합; 2026-11-18 `ls-remote`). 미추적 파일(변경·삭제·추적 금지): `Docs/draft.md`(이전 세션 발견, 보호 대상·미수정). `ses1`(1,434,427B, 2026-11-14 12:47) — 사용자 확인: 세션 대화 백업(민감정보 포함 가능) → 원문 비출력 원칙, 삭제·이동·추적 금지(별도 승인 전).
 - 참고: 최종 main 갱신·브랜치 정리 이후 로컬 상태 기준. 그 사이 외부 변경 여부는 보장 불가 → 다음 세션에서 재확인.
 
 ## D. 완료 작업(커밋/파일로 검증된 범위)
@@ -39,7 +39,7 @@
 - P1-DB-HARDEN-01 2차 리뷰(사용자 지시, 2026-11-17) 수정: ① skip 조건을 즉시 평가되는 bool로 변경 — opt-in 시 반드시 실행(기존 lambda는 pytest가 callable을 bool() 처리해 상시 skip이었음), 비활성화 시 정상 skip, 잘못된 값은 명시적 수집 실패; 실행·스크래치 대상 검증 강화 ② `get_db`가 연결 장애급 SQLAlchemy/psycopg 예외를 DatabaseUnavailableError로 정규화 — 제약 위반·쿼리 오류 비-503, rollback·세션 종료 유지, 접속정보 비노출; 무-DB 실제 요청 503 테스트·분류기 단위 테스트 추가. 커밋 8edd333·c3fd0e6; 기본 스위트 108 passed/8 skipped·Ruff 통과; 라이브 전건·격리 실제 실행은 환경 보류(§G·§K).
 - P1-DB-HARDEN-01 ③ 로컬 처리(2026-11-17): `docker/compose.yaml` db healthcheck 추가(`docker compose config` 파싱 확인 — 런타임 health 미검증; 커밋 6c83a71), `Docs/LOCAL_DEV.md` DB 검증 티어·로컬 DB 현황 갱신(커밋 b216e8d), sessionmaker 검토 기록, `001` 처리 방침 문서 제안(제품 결정 필요). 상세 §G·§K.
 - P1-DB-HARDEN-02(2차 안정화, 2026-11-18, 커밋 77140e0·4dcf7ae): 격리 검증을 클래스 레벨 skipif 영향 밖(모듈 레벨)으로 이동 — 옵트인 시 전제 미충족(URL 없음)이 skip이 아닌 실패로 드러남; 오류 분류를 cause 기반(클래스명 단독 판정 금지)으로 정밀화 + rollback 실패 시 원 오류·분류 보존(정적 로그); 분류기 단위·롤백 실패·무-DB 실제 요청 503·옵트인 규칙 테스트 추가. 기본(DB-free) 실행 유지.
-- 핸드오프 문서 갱신 v8·v9·v10·v11 (2026-11-17~18; 커밋 2e87668·284150f·1a438e5·59fe67b).
+- 핸드오프 문서 갱신 v8·v9·v10·v11·v12 (2026-11-17~18; 커밋 2e87668·284150f·1a438e5·59fe67b·b1e2db0).
 - PR #1(fedd3dd), #2·#3(d205bbd) 병합으로 origin/main=d205bbd. (원격 CI 성공은 이전 세션 보고 사실 — 로컬에서 재실행/확인 불가, 미검증.)
 - GIT-REORG-01/세션 복구: fetch, `main` eeacba3→d205bbd fast-forward(발산·충돌 없음), `develop` 생성(d205bbd), 로컬 4개 브랜치 안전 삭제(일반 삭제), 원격 3개 feature 브랜치 삭제(승인 범위), AGENTS.md 개정 + 본 HANDOFF 생성. 후속 develop에 문서 커밋 4a38fe4.
 - P1-DB-01B 개발 DB 구축(2026-11-15, 로컬·승인 범위): Docker Engine 연결 정상 확인 후 `postgis/postgis:17-3.7` pull, Compose로 컨테이너 `4ddalla-db` 기동(`127.0.0.1:5432` 바인딩), PostgreSQL 17.12 접속, PostGIS 3.7 활성화 확인, 테스트 행 재시작 후 보존 검증(1→1), 테스트 표 삭제. 로컬 전용 `docker/.env` 생성(값 비기록·Git 제외 확인). 상세 §G.
@@ -154,4 +154,4 @@
 - 갱신: 2026-11-17 — 핸드오프 v10: 2차 리뷰 수정 2건 구현·기본 검증·로컬 커밋(8edd333·c3fd0e6; 기본 스위트 108 passed/8 skipped·Ruff 통과). 라이브 DB 전건·격리 실제 실행·컨테이너 health: Engine 접속 불가(현재 컨텍스트 엔드포인트 부재)로 보류·미실행 — 사용자 기동 시 §J 6절차로 재개; 컨테이너·볼륨·DB 무접촉. 원격 `develop` = 284150f 재확인(읽기 전용) — 로컬 2커밋 앞섬, 반영 경로 미확인. 비밀정보 비기록 준수 — `.env` 실제 값 미기재.
 - 본 갱신은 develop 로컬 커밋으로 반영(커밋 해시는 작업 보고에 명시). 핸드오프에 비밀정보 기록 금지 준수 — `.env` 실제 값 미기재.
 - 갱신: 2026-11-18 — 핸드오프 v11: 최종 검증 절차 시도 기록 — 비-DB 회귀(Ruff·기본 pytest 108 passed/8 skipped, 실패 0) 통과; 라이브 검증은 Docker Engine 3회 재시도 미도달로 전면 보류·미실행(설치·재설치·컨텍스트 변경 없음, 컨테이너·볼륨·DB 무접촉) — 사용자 기동 후 §J 6절차 재개. 라이브 `ls-remote`: 원격 `develop` = 1a438e5(로컬 HEAD 동일; 직전 보고 284150f에서 전진 — 주체·시점 미확인). `%LOCALAPPDATA%\Temp\opencode` 출처 미확인 진단 스크립트 3건 관찰·미접촉. 비밀정보 비기록 준수 — `.env` 실제 값 미기재.
-- 갱신: 2026-11-18 — 핸드오프 v12: P1-DB-HARDEN-02 안정화 항목 구현·기본 검증·커밋(77140e0·4dcf7ae; Ruff 통과·기본 pytest 114 passed/8 skipped, 실패 0; 옵트인 강제 실행 시 전제 미충족·연결 실패가 skip 아님=failed로 확인). 라이브 항목은 Engine 미도달로 계속 보류·미실행(컨테이너·볼륨·DB 무접촉). 원격 `develop` = 59fe67b 재확인(읽기 전용) — 로컬 2커밋 앞섬, 반영 경로 미확인. 비밀정보 비기록 준수 — `.env` 실제 값 미기재.
+- 갱신: 2026-11-18 — 핸드오프 v12: P1-DB-HARDEN-02 안정화 항목 구현·기본 검증·커밋(77140e0·4dcf7ae 및 핸드오프 문서 커밋 b1e2db0; Ruff 통과·기본 pytest 114 passed/8 skipped, 실패 0; 옵트인 강제 실행 시 전제 미충족·연결 실패가 skip 아님=failed로 확인). 라이브 항목은 Engine 미도달로 계속 보류·미실행(컨테이너·볼륨·DB 무접촉). 원격 `develop` = 59fe67b 재확인(읽기 전용; 2026-11-18) — 로컬 3커밋 앞섬(77140e0·4dcf7ae·b1e2db0), 반영 경로 미확인. 비밀정보 비기록 준수 — `.env` 실제 값 미기재.
