@@ -1,12 +1,12 @@
 # 4 DDALLA — Session Handoff
 
-- Status: HANDOFF v10 (P1-DB-02B 라이브 검증·마무리 완료·로컬 커밋 / P1-DB-HARDEN-01 ①·②·③ + 2차 리뷰 수정 2건 로컬 커밋 완료(2026-11-17) / 라이브 DB 전건·격리 실제 실행·컨테이너 health 확인은 환경(Engine 접속 불가)으로 보류·미실행 / 원격 push·main 병합·배포는 사용자 승인 대기)
+- Status: HANDOFF v11 (P1-DB-02B 라이브 검증·마무리 완료·로컬 커밋 / P1-DB-HARDEN-01 ①·②·③ + 2차 리뷰 수정 2건 로컬 커밋 완료(8edd333·c3fd0e6·1a438e5) 확인 / 2026-11-18 최종 검증 시도 — 비-DB 회귀 통과, 라이브 검증은 Docker Engine 미도달로 전면 보류·미실행 / 원격 push·main 병합·배포는 사용자 승인 대기)
 - 원칙: 짧고 정확한 사실만 기록. 확인되지 않은 정보는 `미확인`으로 표기. API 키·비밀정보·개인정보 기록 금지. 실제 Git 상태와 다르면 실제 상태를 재확인하고 차이를 보고한다.
 
 ## A. 프로젝트 개요
 
 - 서비스: 4 DDALLA(사딸라) — 대한민국 음식점·카페·베이커리의 공식 할인·혜택을 발견·검증해 지도/목록으로 제공하는 반응형 웹. 최초 실증 성남시 분당구 서현역, 기본 반경 800m·선택 1km.
-- 현재 단계: P0 설계 기준선 + P1 기초 계약/부트스트랩 구현 완료(로컬). GIT-REORG-01(세션 복구·Git 운영 정리) 완료. P1-DB-01 환경 진단(읽기 전용) 후 P1-DB-01B로 로컬 개발 DB(PostgreSQL 17+PostGIS 3.7) 구축 완료. 이어서 P1-DB-02(앱–DB 연결·마이그레이션 기반) 구현·로컬 커밋, P1-DB-02B로 라이브 DB 통합 테스트·Alembic 온라인 검증·마무리 완료(2026-11-16, 로컬; 엔진 재기동 포함 — 데이터 볼륨 무변경). 이후 P1-DB-HARDEN-01(코드 리뷰 후속) 지시 접수 — 읽기 전용 분석(§K) 후 ①·② 구현·검증·커밋(2026-11-17; 커밋 6121953), ③ 문서화·설정 검증까지 로컬 완료(핸드오프 v9). 2차 코드 리뷰 지시(2026-11-17)는 ① skip 조건 실제 평가화·실행 검증·스크래치 대상 검증, ② 연결 장애 503 정규화 — 로컬 구현·기본 검증·커밋 완료(8edd333·c3fd0e6; 핸드오프 v10). 라이브 DB 전건·격리 실제 실행·컨테이너 health는 Engine 접속 불가로 보류·미실행.
+- 현재 단계: P0 설계 기준선 + P1 기초 계약/부트스트랩 구현 완료(로컬). GIT-REORG-01(세션 복구·Git 운영 정리) 완료. P1-DB-01 환경 진단(읽기 전용) 후 P1-DB-01B로 로컬 개발 DB(PostgreSQL 17+PostGIS 3.7) 구축 완료. 이어서 P1-DB-02(앱–DB 연결·마이그레이션 기반) 구현·로컬 커밋, P1-DB-02B로 라이브 DB 통합 테스트·Alembic 온라인 검증·마무리 완료(2026-11-16, 로컬; 엔진 재기동 포함 — 데이터 볼륨 무변경). 이후 P1-DB-HARDEN-01(코드 리뷰 후속) 지시 접수 — 읽기 전용 분석(§K) 후 ①·② 구현·검증·커밋(2026-11-17; 커밋 6121953), ③ 문서화·설정 검증까지 로컬 완료(핸드오프 v9). 2차 코드 리뷰 지시(2026-11-17)는 ① skip 조건 실제 평가화·실행 검증·스크래치 대상 검증, ② 연결 장애 503 정규화 — 로컬 구현·기본 검증·커밋 완료(8edd333·c3fd0e6; 핸드오프 v10). 라이브 DB 전건·격리 실제 실행·컨테이너 health는 Engine 접속 불가로 보류·미실행. 2026-11-18 검증 시도 — 비-DB 회귀 통과, 라이브 검증은 Engine 3회 재시도 미도달로 보류(사용자 기동 필요).
 - 기술 스택(설계 기준선): Frontend React + TypeScript + Vite / Backend Python + FastAPI + Pydantic / DB PostgreSQL + PostGIS / 백그라운드 PostgreSQL 작업 큐 + Python 워커. OCR·LLM·지도/장소·호스팅 공급자는 미정(DECISIONS OPEN-001~011). 개발 에이전트 OpenCode + EXAONE 2.5(런타임 OCR/LLM과 별개).
 
 ## B. 문서 기준선(유효·우선순위)
@@ -21,13 +21,13 @@
 8. `Docs/BACKLOG.md` — 골격(DRAFT), 세부 다수 `미확정`.
 9. `Docs/LOCAL_DEV.md` — Windows 로컬 개발/검증 가이드(부트스트랩 범위; 2026-11-17 DB 검증 티어·현황 갱신 반영).
 
-## C. 실제 Git 상태(2026-11-17 로컬 확인·원격 재확인)
+## C. 실제 Git 상태(2026-11-18 로컬 확인·원격 재확인)
 
 - 로컬 브랜치: `main` = d205bbd(변경 없음). `develop` = 9b937e8 + 로컬 커밋: 4a38fe4(GIT-REORG-01 문서)·0bc8f61·a3d1d4b(핸드오프 v4)·5fac38e(P1-DB-02)·40d38db(핸드오프 v5)·d385ddd(핸드오프 v5 계보 보정)·1a7af5a(Alembic path_separator)·65f30e3(핸드오프 v7)·6121953(P1-DB-HARDEN-01 ①·②)·2e87668(핸드오프 v8)·6c83a71(③ compose)·b216e8d(③ LOCAL_DEV)·284150f(핸드오프 v9)·8edd333(2차 리뷰 ② 소스)·c3fd0e6(2차 리뷰 ①·테스트). HEAD = develop.
-- 원격: `origin/main` = d205bbd, `origin/develop` = **284150f**, `origin/HEAD` → origin/main (2026-11-17 읽기 전용 `ls-remote` 재확인; 이 세션 push·PR·병합 없음). 284150f는 로컬 핸드오프 v9 커밋과 동일 객체. 관찰값 순차 9b937e8 → d385ddd → 65f30e3 → 284150f — 로컬 트래킹이 그 뒤 2커밋(8edd333·c3fd0e6) 앞섬. 반영 경로 주체·시점 미확인(외부 요인 추정) → 사용자 확인 권장·임의 정리 금지. ※핸드오프 v1의 "원격 develop 없음" 기재와 불일치 — 2026-11-15 확인 시점에 이미 존재. ※4a38fe4→9b937e8 변동은 이전 턴(P1-DB-01B) 관찰.
+- 원격: `origin/main` = d205bbd, `origin/develop` = **1a438e5**, `origin/HEAD` → origin/main (2026-11-18 읽기 전용 `ls-remote` 재확인; 이 세션 push·fetch·원격 쓰기 없음). 1a438e5는 로컬 HEAD와 동일 커밋으로, 직전 보고 284150f에서 전진 관찰. 관찰값 순차 9b937e8 → d385ddd → 65f30e3 → 284150f → 1a438e5 — 현재 로컬·원격 트래킹 동일(추가 앞선 커밋 없음). 진전 경로·시점 미확인(외부 요인 단정 안 함) → 사용자 확인 권장·임의 정리 금지. ※핸드오프 v1의 "원격 develop 없음" 기재와 불일치 — 2026-11-15 확인 시점에 이미 존재. ※4a38fe4→9b937e8 변동은 이전 턴(P1-DB-01B) 관찰.
 - 원격 feature 브랜치 3개(`feature/P1-01-bootstrap`, `feature/P1-CONTRACT-01`, `feature/P1-CONTRACT-02`)는 이번 작업에서 삭제 완료(존재·main 포함 관계 선확인 후). `docs/DOC-001-baseline`은 원격 ref 없음(로컬만 존재→삭제).
 - 로컬 삭제 브랜치 tip(e46e01d, 6f506b2, b43cbb9, 563e1e6) 모두 main 조상임을 `merge-base --is-ancestor`로 확인 → 커밋/파일 내용 main에 보존. develop의 main(d205bbd) 대비 진전: 문서 커밋 + P1-DB-02·P1-DB-02B·P1-DB-HARDEN-01 커밋(상세 §D).
-- 커밋(c3fd0e6) 후 작업트리: 추적 파일 변경·삭제 없음(로컬 확인). 미추적 파일(변경·삭제·추적 금지): `Docs/draft.md`(이전 세션 발견, 보호 대상·미수정). `ses1`(1,434,427B, 2026-11-14 12:47) — 사용자 확인: 세션 대화 백업(민감정보 포함 가능) → 원문 비출력 원칙, 삭제·이동·추적 금지(별도 승인 전).
+- 커밋(1a438e5) 후 작업트리: 추적 파일 변경·삭제 없음(로컬 확인). 로컬 develop = origin/develop(1a438e5 — 로컬 원격추적 참조·2026-11-18 `ls-remote` 일치). 미추적 파일(변경·삭제·추적 금지): `Docs/draft.md`(이전 세션 발견, 보호 대상·미수정). `ses1`(1,434,427B, 2026-11-14 12:47) — 사용자 확인: 세션 대화 백업(민감정보 포함 가능) → 원문 비출력 원칙, 삭제·이동·추적 금지(별도 승인 전).
 - 참고: 최종 main 갱신·브랜치 정리 이후 로컬 상태 기준. 그 사이 외부 변경 여부는 보장 불가 → 다음 세션에서 재확인.
 
 ## D. 완료 작업(커밋/파일로 검증된 범위)
@@ -38,6 +38,7 @@
 - P1-DB-HARDEN-01 ①·② 로컬 구현·기본 검증(2026-11-17, 커밋 6121953): ①왕복 테스트를 기본 실행 경로에서 분리(명시적 opt-in 게이트)하고, 파싱된 URL 성분(dialect·loopback host·port·비보호 DB명 — 이름만으로 판정 금지) 검증 통과 시에만 UUID 스크래치 DB에서 업그레이드/다운그레이드/재적용 + 생성·정리(강제 드롭·잔존 확인·실패 시 보장)·부정 가드 단위 테스트 ②DB 오류 경계 테스트(연결 실패 503 정적 본문·자격증명/접속정보 비노출·롤백·커넥션 반환, 비연결 SQLAlchemyError 500 비-503) — 기본 실행 DB-free 유지. 상세 §G·§K.
 - P1-DB-HARDEN-01 2차 리뷰(사용자 지시, 2026-11-17) 수정: ① skip 조건을 즉시 평가되는 bool로 변경 — opt-in 시 반드시 실행(기존 lambda는 pytest가 callable을 bool() 처리해 상시 skip이었음), 비활성화 시 정상 skip, 잘못된 값은 명시적 수집 실패; 실행·스크래치 대상 검증 강화 ② `get_db`가 연결 장애급 SQLAlchemy/psycopg 예외를 DatabaseUnavailableError로 정규화 — 제약 위반·쿼리 오류 비-503, rollback·세션 종료 유지, 접속정보 비노출; 무-DB 실제 요청 503 테스트·분류기 단위 테스트 추가. 커밋 8edd333·c3fd0e6; 기본 스위트 108 passed/8 skipped·Ruff 통과; 라이브 전건·격리 실제 실행은 환경 보류(§G·§K).
 - P1-DB-HARDEN-01 ③ 로컬 처리(2026-11-17): `docker/compose.yaml` db healthcheck 추가(`docker compose config` 파싱 확인 — 런타임 health 미검증; 커밋 6c83a71), `Docs/LOCAL_DEV.md` DB 검증 티어·로컬 DB 현황 갱신(커밋 b216e8d), sessionmaker 검토 기록, `001` 처리 방침 문서 제안(제품 결정 필요). 상세 §G·§K.
+- 핸드오프 문서 갱신 v8·v9·v10 (2026-11-17; 커밋 2e87668·284150f·1a438e5).
 - PR #1(fedd3dd), #2·#3(d205bbd) 병합으로 origin/main=d205bbd. (원격 CI 성공은 이전 세션 보고 사실 — 로컬에서 재실행/확인 불가, 미검증.)
 - GIT-REORG-01/세션 복구: fetch, `main` eeacba3→d205bbd fast-forward(발산·충돌 없음), `develop` 생성(d205bbd), 로컬 4개 브랜치 안전 삭제(일반 삭제), 원격 3개 feature 브랜치 삭제(승인 범위), AGENTS.md 개정 + 본 HANDOFF 생성. 후속 develop에 문서 커밋 4a38fe4.
 - P1-DB-01B 개발 DB 구축(2026-11-15, 로컬·승인 범위): Docker Engine 연결 정상 확인 후 `postgis/postgis:17-3.7` pull, Compose로 컨테이너 `4ddalla-db` 기동(`127.0.0.1:5432` 바인딩), PostgreSQL 17.12 접속, PostGIS 3.7 활성화 확인, 테스트 행 재시작 후 보존 검증(1→1), 테스트 표 삭제. 로컬 전용 `docker/.env` 생성(값 비기록·Git 제외 확인). 상세 §G.
@@ -46,11 +47,13 @@
 
 ## E. 미완료 작업
 
-- 원격 `develop` push: 미실행(승인 범위 밖) — 로컬 `develop` = c3fd0e6(원격 284150f 대비 2커밋 앞섬: 8edd333·c3fd0e6, 전부 로컬·미push), 원격 `develop` = 284150f(2026-11-17 읽기 전용 재확인 — 65f30e3→284150f 전진 관찰·주체·시점 미확인; §C·§I).
+- 원격 `develop` push: 미실행(승인 범위 밖) — 로컬 `develop` = 1a438e5(원격과 동일 커밋, 앞선 로컬 커밋 없음; 2026-11-18 재확인 — 284150f→1a438e5 전진 관찰·주체·시점 미확인; §C·§I), 원격 `develop` = 1a438e5(2026-11-18 읽기 전용 `ls-remote`). 이 세션 push·fetch 없음.
 - main 병합/배포/릴리스: 미실행(사용자 승인 필요).
 - P1-DB-01/01B 개발 DB 환경 구성: 로컬 완료 — PostgreSQL 17.12 + PostGIS 3.7, Compose 로컬 실행, 명명 볼륨 영속(재시작 후 데이터 유지 확인), 개발 전용 `docker/.env`(값 비기록·Git 제외). 운영 환경 배포·서비스 스키마 구현 아님.
 - P1-DB-02B 라이브 검증: 완료(2026-11-16) — 컨테이너 기동 후 pytest DB 4건 포함 15 passed, Alembic 온라인 왕복 검증. 참고: 재검증이 필요하면 §J 절차(엔진 미가동 시 사용자 기동 필요·설치/재설치 금지).
 - P1-DB-HARDEN-01: ①·②·③ 로컬 처리 + 2차 리뷰 수정 2건 로컬 커밋 완료(2026-11-17; 커밋 8edd333·c3fd0e6 포함, 상세 §K). 라이브 DB 전건·격리 실제 실행·컨테이너 health: Engine 접속 불가로 보류 — 필요 시 §J 6절차(사용자 기동 후).
+- Windows 기능(WSL/가상화 관련) 상태 진단 자체는 미확인 — 기능 쿼리 실패, 권한 상승·우회 시도 안 함. 단 Docker Desktop 구동·Engine 연결은 2026-11-15 확인 정상이었고, 2026-11-18 재확인 결과는 §E·§G 참조.
+- 원격 CI 상태: 로컬에서 확인 불가(미검증).
 
 ## F. 최근 변경 파일
 
@@ -74,18 +77,18 @@
 - 영속성: 테스트 표 `persistence_probe` 1행 삽입 → `docker compose restart db`(볼륨 유지, `down -v` 아님) → 재시작 후 1건 확인 → 테스트 표 삭제. 볼륨 `docker_db-data`(driver local) 잔존 — 의도된 영속 데이터 볼륨.
 - 이미지: `postgis/postgis:17-3.7` pull 성공(태그 실재 확인).
 - 2026-11-16 P1-DB-02: Ruff `check .` → All checks passed. Pytest(DATABASE_URL 미설정): 81 passed, 4 skipped(DB 그룹 skip — 설계대로), 경고 1(기존 StarletteDeprecationWarning, 비실패). Alembic 오프라인 경로(`upgrade head --sql`): ini 파싱·스크립트 발견·SQL 방출 정상, 자격증명 미출력. 라이브 DB 그룹 4건·online 마이그레이션: 엔진 정지로 미실행. 참고: `alembic.ini` 비-ASCII 문자가 configparser(cp949 locale) 파싱을 깨뜨려 ASCII로 수정. 커밋 시 LF→CRLF 정규화 경고 확인(core.autocrlf=true 동작; 저장소는 LF 정규화).
-- 주의(검증 한계): 실제 `.env` 작성 후 `docker compose config` 재실행 안 함(값 출력 가능 — 회피; 기동 성공이 변수 해석의 실제 증명). 전체 `docker inspect`·컨테이너 env 덤프 회피(비밀 노출 방지). 호스트 PATH에 `psql`·네이티브 PostgreSQL 없음(서버는 컨테이너 내; 비전형 설치 경로 배제 못 함 — 미설치 단정 아님). 부트스트랩 스위트는 DB-free(DB 통합 테스트 부재) — 변경 없음.
+- 주의(검증 한계): 실제 `.env` 작성 후 `docker compose config` 재실행 안 함(값 출력 가능 — 회피; 기동 성공이 변수 해석의 실제 증명). 전체 `docker inspect`·컨테이너 env 덤프 회피(비밀 노출 방지). 호스트 PATH에 `psql`·네이티브 PostgreSQL 없음(서버는 컨테이너 내; 비전형 설치 경로 배제 못 함 — 미설치 단정 아님). 부트스트랩 스위트는 DB-free이며, DB 통합 테스트는 이후 추가되어 별도 운영.
 - 2026-11-16 P1-DB-02B(라이브 검증): Docker Engine 접속 정상(29.9.3), `4ddalla-db` 정지(Exited 255) → `docker start` 기동, psql 정상·포트 `127.0.0.1:5432` 유지. 사전 상태(4ddalla DB): 사용자/도메인 테이블·데이터 없음, PostGIS/토폴로지 확장 부트스트랩 표만, alembic_version·프로브 없음. pytest(로컬 `docker/.env` 유래 DATABASE_URL 주입, 값 비기록): `tests/test_db_layer.py -v` → **15 passed**(라이브 4건: 접속 성공·commit/rollback·커넥션 반환·Alembic 경유 upgrade/downgrade). Alembic 온라인: `current`(base) → `upgrade head`(001) → 표·버전 확인 → `downgrade base`(프로브 제거; `alembic_version` 표는 0행 잔존 — Alembic 동작) → `upgrade head` 재적용 확인 → 최종 revision 001 적용(되돌리기 가능·검증 표만 추가, 기존 데이터/확장 표 보존, 잔여 테스트 표 없음). 발견: (a) `alembic.ini` path_separator DeprecationWarning → 보강(1a7af5a); (b) psycopg/SQLAlchemy 원본 예외는 접속정보(conninfo) 표시 가능(관측) — 자체 계층은 정규화·억제. 보안: URL/값 미출력, `docker/.env` 무시·비추적 유지, 다른 컨테이너·볼륨 무변경. 프론트엔드: 변경 없음 → 미재실행(2026-11-15 기록 참고).
 - 2026-11-17 P1-DB-HARDEN-01 ①·② 기본 검증(로컬·DB-free): Ruff 0.17.4 `.venv\Scripts\ruff.exe check .` → All checks passed(미커밋 변경분 I001 1건 자동 정렬·B008 3건은 `# noqa: B008`+docstring으로 FastAPI DI 의도 명시). Pytest `.venv\Scripts\python.exe -m pytest -q -ra -p no:cacheprovider` → **92 passed, 8 skipped**(DATABASE_URL 미설정 — DB 그룹 6건 skip은 설계상, 격리 opt-in 미활성 2건), 경고 1(기존 StarletteDeprecation — 비실패), **실패 0**. DATABASE_URL은 프로세스/사용자/머신 환경 모두 미설정 확인. 라이브 DB·Alembic 온라인 재검증 미실행 — 미검증 유지. `git diff --check` 공백 오류 없음(LF↔CRLF 변환 안내만). 변경 규모 +341/−25.
 - 2026-11-17 2차 리뷰 수정 검증(로컬·DB-free): Ruff 0.17.4 `.venv\Scripts\ruff.exe check .` → All checks passed. Pytest `.venv\Scripts\python.exe -m pytest -q -ra -p no:cacheprovider` → **108 passed, 8 skipped**(DATABASE_URL 미설정 — DB 그룹 6건 skip은 설계상, 격리 opt-in 미활성 2건), 경고 1(기존 StarletteDeprecation — 비실패), 실패 0. 신규분 +16: skip 조건 의미론 8(파라미터 7·오류 1)·분류기 7·무-DB 실제 요청 503 1. 근본원인 진단: pytest 9.2.0은 skipif 비문자 조건을 bool() 평가(_pytest/skipping.py:139) — 기존 lambda는 상시 skip이었고 잘못된 env 값도 무시됐음(임시 재현 진단 후 파일 삭제; 수정 전 tree는 커밋 diff로 검증).
 - 2026-11-17 2차 리뷰 라이브 검증 시도: Docker Engine 접속 시도 — 현재 컨텍스트(`desktop-linux`, npipe dockerDesktopLinuxEngine) 엔드포인트 부재로 실패. 설치·재설치·컨텍스트 우회 없음(핸드오프 규칙) → 라이브 전건·격리 실제 실행·컨테이너 health 상태 확인 보류. 컨테이너·볼륨·DB 무접촉(연결 시도 없음), 미검증.
-- 2026-11-17 (③ 마무리): `docker compose -f docker/compose.yaml config --no-interpolate --no-env-resolution` → 구조 파싱 정상·healthcheck 인식, `$$` 리터럴 유지·값 비출력; 컨테이너 기동·health 상태 관찰 없음(미검증). 마크다운/compose 변경분 — ruff·pytest 대상 아님.
+- 2026-11-18 검증 시도 추가(비-DB·라이브 시도): 비-DB 회귀 — Ruff 0.17.4 `All checks passed`; pytest 108 passed/8 skipped(설계상 skip: DB 미설정 6·opt-in 미활성 2), 경고 1 비실패·실패 0. 라이브 — Docker Engine 접속 3회 재시도(20초 간격, 현재 컨텍스트 엔드포인트 부재) 모두 실패: 설치·재설치·컨텍스트 우회 없음(핸드오프 §J 규칙) → 라이브 전건·격리 실제 실행·스크래치 생성/왕복/삭제 독립 확인·베이스라인/사후 일반 DB 비교·컨테이너 상태/health 런타임 **미실행·보류**(사용자 기동 필요). 컨테이너·볼륨·DB 무접촉(연결 시도 없음), 미검증.
 
 ## H. 개발 환경(관측값)
 
 - Python 3.11.9; `.venv` 사용(관측: pytest 9.2.0; ruff 0.17.3 관측 후 2026-11-17 `.venv\Scripts\ruff.exe --version` = 0.17.4로 requirements 핀과 일치 — 그 사이 환경 갱신 경위는 미확인).
 - Node v24.21.0, npm 11.19.0, Git(로컬 user: Oh-JunTaek <aa39043533@gmail.com>).
-- Docker CLI 29.9.3 + compose 플러그인. 컨텍스트 2개: `default`(npipe docker_engine)·`desktop-linux`(진단 시점 현재 선택). 진단 단계에선 `desktop-linux` 엔진 연결이 실패했고 Desktop 실행 파일 일반 경로·서비스·파이프도 미확인이었으나, **사용자가 Docker Desktop 최초 실행·초기 설정을 완료(2026-11-15)한 뒤 Engine 연결 정상 확인**(`docker info` ServerVersion 29.9.3) — 이전 "설치/실행 미확인" 관측은 이 시점 기준으로 해소. 단, 그 이전 항목들은 당시 기준 기록으로 보존. 2026-11-17: 현재 컨텍스트 엔드포인트(npipe dockerDesktopLinuxEngine) 부재로 Engine 도달 불가 — 설치·재설치·컨텍스트 우회 없음, 사용자 기동 필요(§G).
+- Docker CLI 29.9.3 + compose 플러그인. 컨텍스트 2개: `default`(npipe docker_engine)·`desktop-linux`(진단 시점 현재 선택). 진단 단계에선 `desktop-linux` 엔진 연결이 실패했고 Desktop 실행 파일 일반 경로·서비스·파이프도 미확인이었으나, **사용자가 Docker Desktop 최초 실행·초기 설정을 완료(2026-11-15)한 뒤 Engine 연결 정상 확인**(`docker info` ServerVersion 29.9.3) — 이전 "설치/실행 미확인" 관측은 이 시점 기준으로 해소. 단, 그 이전 항목들은 당시 기준 기록으로 보존. 2026-11-18: 현재 컨텍스트 엔드포인트(npipe dockerDesktopLinuxEngine) 부재로 Engine 도달 불가 — 20초 간격 3회 재시도 동일; 설치·재설치·컨텍스트 우회 없음, 사용자 기동 필요(§G).
 - WSL: `wsl` 명령 동작. 진단 시점 배포판 목록에 `docker-desktop` Stopped(컬럼 값 2 — 출력 인코딩 일부 깨짐, 판독 한계), `wsl --status` 세부 출력 판독 불가. 이후 WSL 배포판 상태 재측정은 안 함(DB 작업에 불필요 — Engine은 Desktop 컨텍스트로 동작).
 - 가상화·하드웨어(CIM 관측값, 신뢰도 한계 명시 — 미지원 단정 금지): HypervisorPresent True, VirtualizationFirmwareEnabled True, SecondLevelAddressTranslationExtensions False, Windows 11 Pro 빌드 26300, AMD Ryzen 5 7500X3D 6코어/12스레드, 물리 메모리 ≈31GiB, 보드 Gigabyte B650M K.
 - PostgreSQL: 호스트 PATH·서비스 목록에서 psql/pg_ctl/postgres/initdb 및 postgres 서비스 미발견(비전형 설치 경로 가능성 — 미설치 단정 아님; 서버는 컨테이너로 제공: PostgreSQL 17.12). winget 존재, choco/scoop 미발견.
@@ -98,7 +101,8 @@
 - `Docs/draft.md`: 사용자 별도 지시 전 수정·삭제·추적 금지, 없어도 재생성 금지.
 - `ses1`: 세션 대화 백업(사용자 확인, 1,434,427B) — 민감정보 포함 가능, 원문 비출력 원칙, 삭제·이동·추적 금지(별도 승인 전).
 - Windows 시스템 수준 변경(설치·기능 활성화·재부팅·권한 상승)은 승인 범위 아님 — P1-DB-01 진단은 읽기 전용이었고, P1-DB-01B의 이미지 pull·컨테이너 기동은 본 티켓 승인 범위 내 로컬 작업. 다른 프로젝트 Docker 리소스 미변경(진단 시점 컨테이너·볼륨 전무 → 작업 후 `4ddalla-db`·`docker_db-data`만 존재).
-- 원격 `develop` 변동 관찰: 관찰값 순차 9b937e8 → d385ddd → 65f30e3 → 284150f — 로컬 트래킹은 2커밋 앞섬(8edd333·c3fd0e6, 미push); 반영 주체·시점 미확인·기록된 회차 우리 push 없음; 임의 정리 금지(필요 시 사용자 확인).
+- 원격 `develop` 변동 관찰: 관찰값 순차 9b937e8 → d385ddd → 65f30e3 → 284150f → 1a438e5 — 현재 로컬·원격 동일 커밋(추가 앞선 커밋 없음; 2026-11-18 `ls-remote`)·진전 경로·시점 미확인·이 세션 원격 쓰기 없음·임의 정리 금지(필요 시 사용자 확인).
+- `%LOCALAPPDATA%\Temp\opencode` 에 출처 미확인 진단 스크립트 3건 관찰(2026-11-18): `probe2.py`(1,472B)·`probe_envelope.py`(2,342B)·`probe_iso.py`(1,868B). 이 세션 작성 여부 확인 불가 — 내용 미열람·미수정·미삭제(사용자 확인 권장).
 - docker/.env·컨테이너 DB·볼륨(`docker_db-data`)은 **로컬 개발용**: 비밀번호 등 값은 어떤 문서·보고서·Git에도 기록 금지(준수 — 핸드오프·보고 비기록). 볼륨 삭제 금지(예: `down -v`·volume rm — 향후 티켓 포함). DB 포트는 `127.0.0.1` 바인딩(외부 미노출).
 - 애플리케이션–DB 연결 코드는 P1-DB-02로 구현 완료(로컬 커밋 5fac38e, 로컬 전용), P1-DB-02B로 라이브 검증 완료. 참고(관측): psycopg/SQLAlchemy 원본 예외는 접속정보(conninfo)를 표시할 수 있음 — 자체 계층(check_connection·alembic env·핸들러)은 정규화·억제; 원시 예외를 그대로 로깅·출력하지 않도록 유의. 로컬 개발 값은 비커밋·비기록.
 - HANDOFF와 실제 상태 불일치 가능(특히 원격·타 세션 변경) → 다음 세션에서 실제 상태 재확인.
@@ -106,13 +110,13 @@
 
 ## J. 다음 세션 지시(우선 순서)
 
-1. `AGENTS.md` 읽기 → 2. 본 `Docs/HANDOFF.md` 읽기 → 3. 해당 명세 읽기 → 4. 실제 상태 재확인: `git status --short`, `git branch -avv`, `git log --oneline -5`, `git rev-parse develop main origin/main`, `git ls-remote --heads origin` — HANDOFF와 다르면 실제 상태 기준 갱신·차이 보고(원격 develop 변동 주체·시점 미확인 — 필요 시 사용자 확인) → 5. 다음 작업은 **현재 사용자 승인 티켓 지시 우선** — P1-DB-HARDEN-01 로컬 작업(①·②·③ + 2차 리뷰 수정) 완료(2026-11-17); 보류: 라이브 DB 전건·격리 실제 실행·컨테이너 health(Engine 접속 불가 — 사용자 기동 후 §6 재개); 승인 대기: 원격 `develop` push(로컬 2커밋 앞섬)·main 병합·배포(§E). → 6. 라이브 DB 재검증 절차(필요 시): Docker Desktop 미가동이면 설치·재설치 금지·사용자 기동 요청 후 중단; 엔진 접속 확인 후 `4ddalla-db` 정지 시 `docker start 4ddalla-db`; `DATABASE_URL`은 로컬 `docker/.env` 유래로만 사용(값 비기록·문서/커밋/셸 이력 노출 회피); 강제 실행 `.venv\Scripts\python.exe -m pytest tests/test_db_layer.py -v`(DB 검증 모드 — 환경변수 누락/연결 실패는 skip 아님, 실패/미완으로 보고); Alembic `current`→`upgrade head`→표·버전 확인→`downgrade base`→재적용 확인; 보호 파일 `ses1`·`Docs/draft.md` 불변; 원격 push/PR/merge/deploy 금지.
+1. `AGENTS.md` 읽기 → 2. 본 `Docs/HANDOFF.md` 읽기 → 3. 해당 명세 읽기 → 4. 실제 상태 재확인: `git status --short`, `git branch -avv`, `git log --oneline -5`, `git rev-parse develop main origin/main`, `git ls-remote --heads origin` — HANDOFF와 다르면 실제 상태 기준 갱신·차이 보고(원격 develop 변동 주체·시점 미확인 — 필요 시 사용자 확인) → 5. 다음 작업은 **현재 사용자 승인 티켓 지시 우선** — P1-DB-HARDEN-01 로컬 작업(①·②·③ + 2차 리뷰 수정) 완료(커밋 2026-11-17; 2026-11-18 재시도 3회 실패); 보류: 라이브 DB 전건·격리 실제 실행·컨테이너 health(Engine 접속 불가 — 사용자 기동 후 §6 재개); 승인 대기: 원격 `develop` push(원격·로컬 현재 동일 커밋)·main 병합·배포(§E). → 6. 라이브 DB 재검증 절차(필요 시): Docker Desktop 미가동이면 설치·재설치 금지·사용자 기동 요청 후 중단; 엔진 접속 확인 후 `4ddalla-db` 정지 시 `docker start 4ddalla-db`; `DATABASE_URL`은 로컬 `docker/.env` 유래로만 사용(값 비기록·문서/커밋/셸 이력 노출 회피); 강제 실행 `.venv\Scripts\python.exe -m pytest tests/test_db_layer.py -v`(DB 검증 모드 — 환경변수 누락/연결 실패는 skip 아님, 실패/미완으로 보고); Alembic `current`→`upgrade head`→표·버전 확인→`downgrade base`→재적용 확인; 보호 파일 `ses1`·`Docs/draft.md` 불변; 원격 push/PR/merge/deploy 금지.
 
-## K. P1-DB-HARDEN-01 — ①·②·③ + 2차 리뷰 수정 완료 / 라이브·격리 실제·health 확인은 보류(핸드오프 v10, 2026-11-17)
+## K. P1-DB-HARDEN-01 — ①·②·③ + 2차 리뷰 수정 완료 / 라이브·격리 실제·health 확인은 보류(핸드오프 v11, 2026-11-18)
 
 지시 접수(2026-11-16): P1-DATA-01 전 코드 리뷰 후속. ①(P0) 마이그레이션 왕복 테스트 격리 ②(P1) 실제 FastAPI 엔드포인트 오류 처리·구분·비노출 ③ 운영 안정성(컴포즈 healthcheck·테스트 명령 분리·sessionmaker 검토·001 후속 제거 문서화) ④검증. 도메인 테이블 신규 생성 없음. develop 작업·로컬 커밋·핸드오프 갱신·보호 파일(ses1·Docs/draft.md) 준수·push/PR/병합/deploy 금지.
 
-상태: ①·②·③ 로컬 처리 완료 + 2차 리뷰 수정 2건 완료(2026-11-17; 커밋 6121953·2e87668·6c83a71·b216e8d·8edd333·c3fd0e6 — §D·§G). 세부: ③ 중 healthcheck는 설정 파싱까지 확인(런타임 health 미검증), 문서화·검토 기록 완료, `001`은 방침 문서 제안까지. 2차 리뷰(사용자 지시) ①·②는 로컬 구현·기본 검증 완료(아래). 도메인 테이블 신규 생성 없음 · 원격 작업 없음. 라이브·격리 실제·컨테이너 health는 Engine 접속 불가로 보류(사용자 기동 필요, §G·§J).
+상태: ①·②·③ 로컬 처리 완료 + 2차 리뷰 수정 2건 완료(2026-11-17; 커밋 6121953·2e87668·6c83a71·b216e8d·8edd333·c3fd0e6 — §D·§G). 세부: ③ 중 healthcheck는 설정 파싱까지 확인(런타임 health 미검증), 문서화·검토 기록 완료, `001`은 방침 문서 제안까지. 2차 리뷰(사용자 지시) ①·②는 로컬 구현·기본 검증 완료(아래). 도메인 테이블 신규 생성 없음 · 원격 작업 없음. 라이브·격리 실제·컨테이너 health는 Engine 접속 불가(2026-11-18 재시도 3회 실패)로 보류 — 사용자 기동 필요(§G·§J).
 
 읽기 전용 분석 기록(분석 시점 사실; 해소 항목 표시):
 - (분석 시점 구조 → ①로 해소) `TestLiveDatabase`가 클래스 레벨 `skipif(not DATABASE_URL)`; 왕복 테스트가 `get_database_url()` 대상에 `command.upgrade/downgrade`를 실행 — DATABASE_URL이 일반 개발 DB를 가리키면 그 DB에 `downgrade base`가 실행될 수 있는 구조였음(이번 P0의 직접 대상).
@@ -141,3 +145,4 @@
 - 갱신: 2026-11-17 — 핸드오프 v9: ③ 마무리 커밋(6c83a71 `docker/compose.yaml` healthcheck — config 파싱 확인·런타임 미검증; b216e8d `Docs/LOCAL_DEV.md`). 로컬 `develop` = 원격 `develop`(=65f30e3, 이후 284150f로 전진 확인 §C) 대비 커밋 5개 앞섬(6121953·2e87668·6c83a71·b216e8d·284150f, 미push); push/PR/병합/deploy 미실행(승인 범위 밖). 라이브 DB 재검증은 §J 6절차(필요 시·미실행). 비밀정보 비기록 준수 — `.env` 실제 값 미기재.
 - 갱신: 2026-11-17 — 핸드오프 v10: 2차 리뷰 수정 2건 구현·기본 검증·로컬 커밋(8edd333·c3fd0e6; 기본 스위트 108 passed/8 skipped·Ruff 통과). 라이브 DB 전건·격리 실제 실행·컨테이너 health: Engine 접속 불가(현재 컨텍스트 엔드포인트 부재)로 보류·미실행 — 사용자 기동 시 §J 6절차로 재개; 컨테이너·볼륨·DB 무접촉. 원격 `develop` = 284150f 재확인(읽기 전용) — 로컬 2커밋 앞섬, 반영 경로 미확인. 비밀정보 비기록 준수 — `.env` 실제 값 미기재.
 - 본 갱신은 develop 로컬 커밋으로 반영(커밋 해시는 작업 보고에 명시). 핸드오프에 비밀정보 기록 금지 준수 — `.env` 실제 값 미기재.
+- 갱신: 2026-11-18 — 핸드오프 v11: 최종 검증 절차 시도 기록 — 비-DB 회귀(Ruff·기본 pytest 108 passed/8 skipped, 실패 0) 통과; 라이브 검증은 Docker Engine 3회 재시도 미도달로 전면 보류·미실행(설치·재설치·컨텍스트 변경 없음, 컨테이너·볼륨·DB 무접촉) — 사용자 기동 후 §J 6절차 재개. 라이브 `ls-remote`: 원격 `develop` = 1a438e5(로컬 HEAD 동일; 직전 보고 284150f에서 전진 — 주체·시점 미확인). `%LOCALAPPDATA%\Temp\opencode` 출처 미확인 진단 스크립트 3건 관찰·미접촉. 비밀정보 비기록 준수 — `.env` 실제 값 미기재.
