@@ -52,6 +52,7 @@ from sqlalchemy.exc import (
 from sqlalchemy.orm import Session
 
 from alembic import command
+from app.db import dependencies
 from app.db.config import get_database_url
 from app.db.dependencies import (
     _is_connection_failure,
@@ -328,14 +329,16 @@ def test_failure_does_not_log_credentials(caplog: pytest.LogCaptureFixture) -> N
 @pytest.mark.parametrize(
     "exc",
     [
-        SqlAlchemyOperationalError("SELECT 1", {}, Exception("connection refused")),
         DisconnectionError("connection invalidated"),
         SqlAlchemyTimeoutError("pool timed out"),
         psycopg.OperationalError("connection refused"),
+        psycopg.InterfaceError("cannot use connection"),
+        SqlAlchemyOperationalError("SELECT 1", {}, psycopg.OperationalError("bootstrap")),
+        SqlAlchemyOperationalError("SELECT 1", {}, psycopg.InterfaceError("bootstrap")),
     ],
 )
 def test_connection_failures_are_recognized(exc: Exception) -> None:
-    """Only connection-class failures normalize to DatabaseUnavailableError."""
+    """Connection-class failures normalize, from driver cause or engine level."""
     assert _is_connection_failure(exc) is True
 
 
@@ -345,11 +348,72 @@ def test_connection_failures_are_recognized(exc: Exception) -> None:
         IntegrityError("INSERT", {}, Exception("duplicate key")),
         ProgrammingError("SELECT", {}, Exception("syntax error")),
         SQLAlchemyError("generic database error"),
+        # OperationalError is not connection loss on class name alone:
+        SqlAlchemyOperationalError("SELECT 1", {}, Exception("server-side failure")),
+        SqlAlchemyOperationalError("SELECT 1", {}, None),
     ],
 )
 def test_non_connection_errors_are_not_unavailable(exc: Exception) -> None:
     """Constraints / query errors / unknowns must not be reported as outage (503)."""
     assert _is_connection_failure(exc) is False
+
+
+class _RecordingSession:
+    """Session double whose rollback fails, for cleanup-order checks."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.rollback_calls = 0
+
+    def rollback(self) -> None:
+        self.rollback_calls += 1
+        raise RuntimeError("rollback failed on purpose")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _recording_session_factory(monkeypatch: pytest.MonkeyPatch) -> list[_RecordingSession]:
+    created: list[_RecordingSession] = []
+
+    def sessionmaker(**_kwargs: object) -> object:
+        def make() -> _RecordingSession:
+            session = _RecordingSession()
+            created.append(session)
+            return session
+
+        return make
+
+    monkeypatch.setattr(dependencies, "sessionmaker", sessionmaker)
+    monkeypatch.setattr(dependencies, "get_engine", lambda: object())
+    return created
+
+
+def test_get_db_rollback_failure_keeps_connection_error_static_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rollback failing must not mask the original error or its classification."""
+    created = _recording_session_factory(monkeypatch)
+    gen = dependencies.get_db()
+    next(gen)
+    with pytest.raises(DatabaseUnavailableError) as excinfo:
+        gen.throw(psycopg.OperationalError("connect failed"))
+    assert "database connection failed" in str(excinfo.value)
+    assert created[0].rollback_calls == 1
+    assert created[0].closed is True  # cleanup still attempted
+
+
+def test_get_db_rollback_failure_does_not_mask_other_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = _recording_session_factory(monkeypatch)
+    gen = dependencies.get_db()
+    next(gen)
+    boom = ValueError("application failure")
+    with pytest.raises(ValueError) as excinfo:
+        gen.throw(boom)
+    assert excinfo.value is boom
+    assert created[0].closed is True  # cleanup still attempted
 
 
 def test_session_create_and_close(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -629,32 +693,43 @@ class TestLiveDatabase:
                 connection.execute(text(f"DROP TABLE IF EXISTS {quoted}"))
             engine.dispose()
 
-    @pytest.mark.skipif(
-        _skip_isolated_migration(),
-        reason=(
-            "isolated-migration verification not enabled "
-            "(DDALLA_TEST_ISOLATED_MIGRATION_DB=1; default run stays DB-free)"
-        ),
-    )
-    def test_alembic_roundtrip_on_isolated_scratch_db(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        scratch = _isolated_roundtrip(get_database_url(), monkeypatch)
-        assert scratch.startswith(_SCRATCH_PREFIX)
 
-    @pytest.mark.skipif(
-        _skip_isolated_migration(),
-        reason=(
-            "isolated-migration verification not enabled "
-            "(DDALLA_TEST_ISOLATED_MIGRATION_DB=1; default run stays DB-free)"
-        ),
-    )
-    def test_isolated_roundtrip_cleans_up_on_failure(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def boom(*args: object, **kwargs: object) -> None:
-            raise RuntimeError("simulated migration failure")
+# --- Isolated-migration verification (opt-in; unmet prerequisites FAIL) --------
+#
+# Kept deliberately OUTSIDE TestLiveDatabase: that class carries its own
+# `skipif(not DATABASE_URL)`, which would suppress these tests even when the
+# verification was explicitly requested. Without opt-in they skip as before;
+# with opt-in they run and a missing configuration/connection is a failure,
+# never a silent skip.
 
-        monkeypatch.setattr(command, "upgrade", boom)
-        with pytest.raises(RuntimeError, match="simulated migration failure"):
-            _isolated_roundtrip(get_database_url(), monkeypatch)
+
+@pytest.mark.skipif(
+    _skip_isolated_migration(),
+    reason=(
+        "isolated-migration verification not enabled "
+        "(DDALLA_TEST_ISOLATED_MIGRATION_DB=1; default run stays DB-free)"
+    ),
+)
+def test_alembic_roundtrip_on_isolated_scratch_db(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scratch = _isolated_roundtrip(get_database_url(), monkeypatch)
+    assert scratch.startswith(_SCRATCH_PREFIX)
+
+
+@pytest.mark.skipif(
+    _skip_isolated_migration(),
+    reason=(
+        "isolated-migration verification not enabled "
+        "(DDALLA_TEST_ISOLATED_MIGRATION_DB=1; default run stays DB-free)"
+    ),
+)
+def test_isolated_roundtrip_cleans_up_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated migration failure")
+
+    monkeypatch.setattr(command, "upgrade", boom)
+    with pytest.raises(RuntimeError, match="simulated migration failure"):
+        _isolated_roundtrip(get_database_url(), monkeypatch)
