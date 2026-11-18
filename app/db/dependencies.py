@@ -11,17 +11,16 @@ unchanged.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from psycopg import InterfaceError as PsycopgInterfaceError
 from psycopg import OperationalError as PsycopgOperationalError
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import (
     DisconnectionError,
-)
-from sqlalchemy.exc import (
-    OperationalError as SqlAlchemyOperationalError,
 )
 from sqlalchemy.exc import (
     TimeoutError as SqlAlchemyTimeoutError,
@@ -31,6 +30,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from .engine import get_engine
 from .errors import DatabaseConfigurationError, DatabaseUnavailableError
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "DatabaseConfigurationError",
     "DatabaseUnavailableError",
@@ -39,22 +40,28 @@ __all__ = [
     "get_db",
 ]
 
-# Only these mean "PostgreSQL could not be reached / the connection failed".
-# Constraint violations, query errors and anything else keep their ordinary
-# error path -- they must not be reported as a 503 outage.
+# Connection-class failures are identified from evidence, not by class name
+# alone: psycopg driver connection classes (connection exceptions and client
+# interface errors) as raised directly or wrapped in a SQLAlchemy
+# OperationalError's driver cause, plus SQLAlchemy engine/pool-level
+# availability errors. An OperationalError without a recognized driver cause
+# is deliberately NOT treated as connection loss -- server-side execution
+# errors (constraints, query errors, unknowns) keep their ordinary path and
+# must not be reported as a 503 outage.
 _CONNECTION_FAILURE_TYPES = (
-    SqlAlchemyOperationalError,
+    PsycopgInterfaceError,
+    PsycopgOperationalError,
     DisconnectionError,
     SqlAlchemyTimeoutError,
-    PsycopgOperationalError,
 )
 
 
 def _is_connection_failure(exc: BaseException) -> bool:
-    """True only for connection-class failures (SQLAlchemy/psycopg).
+    """Classify failure as connection-class from its driver cause.
 
-    The wrapped driver error (``exc.orig``) is checked as well so the mapping
-    stays correct across execution paths.
+    Deliberately does not decide by SQLAlchemy exception class name alone:
+    OperationalError is a broad DBAPI wrapper, so classification requires the
+    wrapped psycopg driver cause (or a direct driver/engine-level failure).
     """
     if isinstance(exc, _CONNECTION_FAILURE_TYPES):
         return True
@@ -83,7 +90,13 @@ def get_db() -> Iterator[Session]:
     try:
         yield session
     except Exception as exc:
-        session.rollback()
+        try:
+            session.rollback()
+        except Exception:  # noqa: BLE001
+            # Never let a failing rollback mask the original error or route it
+            # through a different class; close below still runs. Static message
+            # only -- exception text may carry SQL/URL material.
+            logger.debug("session rollback failed; original error preserved")
         if _is_connection_failure(exc):
             raise DatabaseUnavailableError(
                 "database connection failed (details withheld; check that "
