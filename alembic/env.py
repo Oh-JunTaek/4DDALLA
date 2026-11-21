@@ -22,6 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.db import models  # noqa: F401  -- register P1-DATA-01 tables on Base.metadata
 from app.db.base import Base
 from app.db.config import get_database_url
 from app.db.engine import create_db_engine

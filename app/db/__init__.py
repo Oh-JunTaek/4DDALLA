@@ -2,9 +2,10 @@
 
 Scope (ticket): connection configuration module, SQLAlchemy 2.x Engine/Session
 management, FastAPI DB session dependency, explicit connection-error handling,
-ORM ``Base``, and Alembic wiring. Domain tables (stores, brands, promotions,
-...) are deliberately out of scope - they belong to later tickets with
-separate design/approval.
+ORM ``Base``, and Alembic wiring. P1-DATA-01 (2026-11-21) added the first
+domain models in ``app.db.models`` -- brands, stores, store_aliases,
+sources, source_links, source_evidence; other domain tables follow in later
+approved tickets.
 
 Design notes:
 - All configuration comes from environment variables; the module never reads

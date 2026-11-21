@@ -1,6 +1,6 @@
 # 4 DDALLA — P1-DATA-01 Physical Model Draft (brands · stores · store_aliases · sources · source_links · source_evidence)
 
-- Status: **DRAFT — 설계 제안(초안), 미확정.** 물리 실행·검증된 스키마가 아니며 정식 ORM 클래스·DDL·Alembic 002는 **이 문서로 작성·실행하지 않는다.**
+- Status: **설계 기록 — 초안의 제안이 로컬에서 구현됨(2026-11-21): ORM `app/db/models.py` + Alembic `002` 작성·격리 목표.** DB 적용·격리 라이브 왕복은 마이그레이션 검증 절차(샌드박스/격리 DB + 사전 점검) 통과가 조건이며 미실행 — 본 문서는 설계 근거와 구현 매핑, 잔여 미확정 목록의 기록이다.
 - 근거 기준선: `Docs/DATA_MODEL.md` v1.0.0(§2 기본 타입, §3 엔터티 목록, §4 관계·필수 제약, §5 변경·충돌, §6 위치 조회, §7 로그·보존, §8 P1 확정 물리 항목) + `Docs/ENGINE_SPEC.md` v1.0.0(§2 상태값 단일 기준, §3 StoreDiscovery, §4 SourceDiscovery, §10 오류·멱등성, §11 불변식, §12 계약 버전).
 - 관계: `DATA_MODEL.md` 상태 = `LOGICAL_SCHEMA_BASELINED; physical SQL DDL and migrations not yet verified`; 두 문서 모두 물리 스키마를 검증하지 않았으므로 아래 물리 진술은 **문서에 있는 규칙의 적용 제안 또는 미확정 항목**이다.
 - 표기: **[문서]** 문서에 명시된 규칙 / **[제안]** 이번 초안의 설계 제안(미승인) / **[미확정]** 출처 문서·공급자·정책 확인이 필요한 항목. 임의 기본값 단정 금지.
@@ -70,24 +70,45 @@
 
 - 필드·타입: §2 기본 타입 적용. `JSONB`는 "비정형 AI 출력" 용도(§2) — 출처 근거·고정 필드 오용 금지, 주요 검색값은 정형 칼럼(§2).
 - UUID·FK: 전 엔터티 UUID PK; 위 서술 FK 외 신규 관계 — **[미확정]**(근거 없이 추가 금지).
-- UNIQUE/CHECK: 문서 명시 = `source_links` CHECK(§4), 기타(브랜드명·별칭·출처 정규화 URL 등) 유일성은 §8 확정 항목/정책 확인 — **[미확정]**, 부분 유니크 인덱스 필요 시 구현 티켓.
+- UNIQUE/CHECK: 문서 명시 = `source_links` CHECK(§4), 기타(브랜드명·별칭·출처 정규화 URL 등) 유일성은 §8 확정 항목/정책 확인 — **[미확정]** → 출처 URL UNIQUE만 보류 상태로 구현됨, 나머지 정책 확인 대상; 부분 유니크 인덱스 필요 시 후속 확정.
 - 공식성 ↔ 수집 권한 분리: `SourceIdentityStatus`≠`CollectionPermissionStatus`, 수집 방식 별도 필드 [문서 §2·§4]; 출처 "소유 공식성 근거"와 "수집 허가"는 별개 기록(근거 §5, 허가 §4) — **[문서]** 취지.
 - 좌표/PostGIS: `geography(Point,4326)`+GiST [문서 §2·§6]; 권한 확보 전제 [문서 §1·§2]; 필드 위치(stores 직접 vs 권리 확보 사실 경유) — **[미확정/설계 검토]**.
 - 공급자 권리 ↔ 독립 사실 경계: 공급자 계열은 `data_providers`·`data_usage_policies`·`provider_place_refs`·`place_observations`(TTL)로 관리, 독립적으로 사용할 권리가 확보된 매장 사실은 `store_facts` — **[문서]** §3. `stores` 좌표·속성 병합 근거는 권리 확보된 사실 — **[제안/검토]**, 공급자 관측만으로 merge 금지.
-- **Alembic 002의 검증용 테이블 제거**: ▸ 001은 검증 전용 `p1db02_migration_probe`만 담은 마이그레이션(도메인 테이블 없음). ▸ 002(신규, down_revision=001)에서 `op.drop_table(...)`하는 **방안을 제안**하되 — ① 운영·데이터 영향 검토 기록 ② 온라인 격리 스크래치 DB에서 upgrade→001→002→downgrade→재적용 왕복 검증(기존 격리 시험 하네스 재사용) ③ 다운그레이드 시 스키마 복원·데이터 비복원(드롭은 되돌리기 불가) 정책 명문화. ▸ 같은 티켓에서 도메인 테이블을 신설하지 않음 — 슬롯 점검 후 별도. ▸ 구버전 파일 수정·이력 재작성(rebase/edit) 금지, forward 전용.
+- **Alembic 002의 검증용 테이블 제거**: ▸ 001은 검증 전용 `p1db02_migration_probe`만 담은 마이그레이션(도메인 테이블 없음). ▸ 002(신규, down_revision=001)가 `op.drop_table` + 6개 도메인 테이블 생성·인덱스를 수행 — **[구현됨·로컬 작성, DB 적용 미검증]**. ▸ 다운그레이드는 스키마 역순 복원 + 프로브 형태 재생성 — **스키마 복원이며 드롭·삭제된 행은 복구되지 않음**(정책 명문화됨, §9). ▸ 개발 DB 적용 전 요구 조건: 격리(또는 동등) 환경에서 왕복 검증 + **프로브 표 실제 데이터·예상 밖 스키마 부재 사전 확인**, 이탈 시 적용 중단(티켓 지시).
 - **upgrade/downgrade·데이터 보존 정책(준용)**: 추가 우선(additive-first); 삭제·중의 의미 변경은 증거·검토 기반·승인 후; 자동추출→검증 revision→공개 projection 단계 분리(§5); 원문 재분석이 운영자 `field_override` 덮지 않음(§5); 종료·취소·조건 오류 안전 차단 우선(§5). Alembic 다운그레이드는 **스키마 복원이며 드롭된 데이터 복원이 아님** — 데이터 제거는 별도 정책·백업/보존 규칙.
 - 멱등성·이력(연습 없음): 재처리 중복 금지·버전 명시 [문서 §1·§10]; 이벤트/오류 기록 원칙 §7·ENGINE_SPEC §10 준용.
 
-## 8. 미확정·결정 필요(요약)
+## 8. 구현 반영(2026-11-21, 로컬 작성) 및 논리 → 물리 차이표
+
+- 6개 엔터티 ORM(``app/db/models.py``) + Alembic **002** 작성; 오프라인 DDL 방출 확인(6 CREATE TABLE · 프로브 DROP · gist · FK/CHECK). **[로컬 구현 — 라이브 검증·개발 DB 적용 미실행]**; 적용 조건: 격리 왕복 검증 통과 + 개발 DB 사전 점검(프로브 표 데이터·예상 밖 스키마 부재), 이탈 시 중단.
+- 공유 Enum 적용: `SourceIdentityStatus`·`CollectionPermissionStatus` 값 도메인 그대로(컬럼 CHECK 일치). 브랜드/채널/카테고리/별칭·근거 **값 집합은 문서 미열거 → 텍스트 칼럼, 임의 확정 안 함**(데이터 사전 통제는 후속 확정 항목).
+- `sources.canonical_url`: 정규화 규칙 확정 전 **UNIQUE 미도입**(데이터 유실 방지) — 인덱스만.
+- 좌표: nullable `geography(Point,4326)` + GiST; 값의 의미·병합은 `store_facts`(권리 확보) 정책 경계 — 본 모델엔 병합 로직 없음.
+
+| 항목 | 논리 기준(DATA_MODEL §3/§4) | 물리 구현(ORM·002) | 상태 |
+|---|---|---|---|
+| brands 별칭·상태 | 필드 존재만 기술, 이름·구조 미확정 | 별칭 컬럼·상태 Enum 미생성(임의 확정 금지) | 미확정(후속) |
+| stores | nullable brand_id, category, operational_status | 동일 + 좌표 nullable geography(Point,4326)+GiST; FK `SET NULL` | 문서 정합 |
+| store_aliases | 공식·검증 별칭 + 유효 범위(형태 미확정) | `alias`+`valid_from`/`valid_to`+범위 CHECK | 시점 규칙 미확정 |
+| sources | channel_type/canonical_url/permission/method | 동일; permission CHECK=공유 Enum 값; URL UNIQUE 없음 | 구현 결정+미확정 |
+| source_links | source + 브랜드 또는 매장(CHECK) | 동일 CHECK + identity_status CHECK(공유 Enum) | 문서 근거 |
+| source_evidence | 유형/근거 참조/검증 시각 | `evidence_type`/`evidence_ref` 텍스트 | 형식 미확정(후속) |
+| 공통 | UUID·TIMESTAMPTZ·생성/수정 이력 | 동일(서버 기본값 now() + onupdate) | 문서 정합 |
+| 정규화 URL 유일성 | "별도 정규화 규칙"(미확정) | UNIQUE 보류 | 미확정 |
+| 삭제 정책 | 근거·이력 연쇄 삭제 금지(철학) | FK `RESTRICT`(store_aliases·source_links·source_evidence), `SET NULL`(stores.brand) | 구현 선택(부속 레코드 보존 근거) |
+
+## 9. 미확정·결정 필요(요약)
 
 1. 필드명·값 집합(특히 `channel_type`, `operational_status`, 브랜드 상태·별칭 구조, evidence 유형·형식) — 문서 미열거.
 2. 출처 정규화 URL 규칙·유일성(§4·§8 확정 항목).
 3. 공급자별 관측 TTL·보존/삭제 정책 연결(§1·§8).
 4. 좌표 필드 위치·권리 근거 표현, 별칭 유효 범위 표현.
-5. Alembic 002 드롭 방식·검증·다운그레이드 스키마 복원 정책(사용자 결정 사항).
+5. Alembic 002 검증(격리 왕복)·개발 DB 적용 순서·다운그레이드 스키마 복원 정책 — **검증·적용 미실행(환경/절차 대기)**.
 6. 동시 검수/갱신 충돌·대용량 이미지 등 §8 나머지 확정 항목(범위 밖).
-7. 본 초안은 **설계 제안** — 정식 물리 스키마/ORM/마이그레이션 아님; 확정은 설계 검토·후속 티켓.
+7. 증거 형식·근거 참조 표현(문자열 vs 구조화) — 후속 구현 계약.
 
-## 9. 이번 단계 범위 준수
+## 10. 이번 단계 범위 준수
 
-- 정식 ORM 모델 클래스·DDL·Alembic 002 **작성하지 않음**(지시). 테이블 생성·수정·삭제 명령 실행 없음. 기존 논리 모델·문서 변경 없음.
+- 정식 ORM 모델 클래스·DDL·Alembic 002 **작성됨(로컬, 미적용)** — 이전 단계 지시("작성하지 않음")의 후속으로 사용자 승인 티켓에서 실행. 테이블 생성·수정·삭제 **명령 실행 없음**(라이브 미실행).
+- 기존 논리 모델·기준선 문서 변경 없음. 구현 사실·잔여 미확정은 본 문서·핸드오프에 기록.
+- 차기 단계: 격리 왕복 검증 → 개발 DB 사전 점검 → 적용 판단(사용자 결정 경로).

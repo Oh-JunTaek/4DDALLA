@@ -1,6 +1,6 @@
 # 4 DDALLA — Session Handoff
 
-- Status: HANDOFF v14 (P1-DB-02B 라이브 검증·마무리 완료·로컬 커밋 / P1-DB-HARDEN-01 로컬 완료(8edd333·c3fd0e6·1a438e5 등) / P1-DB-HARDEN-02 안정화 항목 로컬 완료(77140e0·4dcf7ae)·기본 검증 통과 / 2026-11-19 Engine 접속 회복→11-20 재확인·라이브 부분 재검증(§G), 잔여 항목 보류 / P1-DATA-01 물리 모델 설계 초안(9cdd1bd) / 원격 push·main 병합·배포는 사용자 승인 대기)
+- Status: HANDOFF v15 (P1-DB-02B 라이브 검증·마무리 완료·로컬 커밋 / P1-DB-HARDEN-01 로컬 완료(8edd333·c3fd0e6·1a438e5 등) / P1-DB-HARDEN-02 안정화 항목 로컬 완료(77140e0·4dcf7ae)·기본 검증 통과 / 2026-11-19 Engine 접속 회복→라이브 부분 재검증(§G), 잔여 항목 보류 / P1-DATA-01 물리 모델 설계 초안(9cdd1bd) → **1차 도메인 스키마 구현(2026-11-21, 로컬·미적용, §M**: ORM+002 작성·구현 검사 통과·라이브/적용 미실행 / 원격 push·main 병합·배포는 사용자 승인 대기)
 - 원칙: 짧고 정확한 사실만 기록. 확인되지 않은 정보는 `미확인`으로 표기. API 키·비밀정보·개인정보 기록 금지. 실제 Git 상태와 다르면 실제 상태를 재확인하고 차이를 보고한다.
 
 ## A. 프로젝트 개요
@@ -48,11 +48,11 @@
 
 ## E. 미완료 작업
 
-- 원격 `develop` push: 미실행(승인 범위 밖). 로컬 `develop` = 9cdd1bd — 59fe67b 이후 로컬 커밋 6개(77140e0·4dcf7ae·b1e2db0·2ed9b31·50738e3·9cdd1bd; 이번 세션 `ls-remote` 재확인 = 50738e3, 11-19 확인값과 동일 → 이 중 9cdd1bd만 미push). 반영 경로 주체·시점 미확인(§C·§I). 로컬 원격추적 ref = 50738e3. 이 세션 push·fetch·원격 쓰기 없음.
+- 원격 `develop` push: 미실행(승인 범위 밖). 로컬 `develop` = 9cdd1bd 계열, 원격 `develop`(50738e3, 최근 확인) 대비 로컬 3커밋 앞섬(9cdd1bd·3f53ef4·cabc15a; 이번 세션 `ls-remote` 재확인값과 동일 — 이 3커밋 미push). 반영 경로 주체·시점 미확인(§C·§I). 로컬 원격추적 ref = 50738e3. 이 세션 push·fetch·원격 쓰기 없음.
 - main 병합/배포/릴리스: 미실행(사용자 승인 필요).
 - P1-DB-01/01B 개발 DB 환경 구성: 로컬 완료 — PostgreSQL 17.12 + PostGIS 3.7, Compose 로컬 실행, 명명 볼륨 영속(재시작 후 데이터 유지 확인), 개발 전용 `docker/.env`(값 비기록·Git 제외). 운영 환경 배포·서비스 스키마 구현 아님.
 - P1-DB-02B 라이브 검증: 완료(2026-11-16) — 컨테이너 기동 후 pytest DB 4건 포함 15 passed, Alembic 온라인 왕복 검증. 참고: 재검증이 필요하면 §J 절차(엔진 미가동 시 사용자 기동 필요·설치/재설치 금지).
-- P1-DB-HARDEN-01/02: 2차 리뷰 수정 + 2차 안정화 항목 로컬 커밋 완료(6121953·8edd333·c3fd0e6·2e87668·6c83a71·b216e8d·77140e0·4dcf7ae, 문서 커밋 별도; 2026-11-17~19; 상세 §K·§L). 라이브: 11-17~18 Engine 미도달로 보류 → 11-19 Engine 접속 회복·부분 재검증(§G: 라이브 전 그룹 통과·스냅샷·불변 확인; 격리 실측은 가드 차단으로 미실행). 잔여: 격리 스크래치 왕복(대상 소유·설정 확인 필요)·컨테이너 health 런타임·비정상 엔드포인트 실측 — 사용자 결정·환경 확인 필요.
+- P1-DB-HARDEN-01/02: 2차 리뷰 수정 + 2차 안정화 항목 로컬 커밋 완료(6121953·8edd333·c3fd0e6·2e87668·6c83a71·b216e8d·77140e0·4dcf7ae, 문서 커밋 별도; 2026-11-17~19; 상세 §K·§L). 라이브: 11-17~18 Engine 미도달로 보류 → 11-19 Engine 접속 회복·부분 재검증(§G: 라이브 전 그룹 통과·스냅샷·불변 확인; 격리 실측은 당시 가드가 앵커를 거부해 미실행). 잔여: 컨테이너 health 런타임·비정상 엔드포인트 실측(사용자 결정·환경 확인 필요); 격리 왕복 문제는 2026-11-21 정책 수정으로 해소(실실행은 엔진 미도달로 대기 — §M.3).
 - Windows 기능(WSL/가상화 관련) 상태 진단 자체는 미확인 — 기능 쿼리 실패, 권한 상승·우회 시도 안 함. 단 Docker Desktop 구동·Engine 연결은 2026-11-15 확인 정상이었고, 2026-11-18 재시도(3회) 결과는 §E·§G 참조.
 - 원격 CI 상태: 로컬에서 확인 불가(미검증).
 
@@ -92,10 +92,11 @@
   · 사전(읽기 전용) 스냅샷: DB `4ddalla` · PostgreSQL 17.12 · alembic revision **001** · 테이블 `alembic_version, layer, p1db02_migration_probe, spatial_ref_sys, topology` · 격리 scratch iso **없음** · 역할 superuser/CREATEDB(플래그만 확인·부여 없음).
   · 라이브 테스트: `pytest tests/test_db_layer.py -v`(URL 주입, 값 비출력) → **50 passed, 2 skipped**(2 = opt-in 미활성 격리·설계상 skip; warning 1 비실패) — 라이브 전건 수행.
   · 전체 스위트(URL 주입) → **120 passed, 2 skipped**.
-  · 격리 강제 실행: (11-18 기록) 옵트인+URL 미설정 → 격리 2건 **failed**(44 passed/6 skipped, 파일 단위) — 전제 미충족은 skip 아님; 옵트인+도달불가 URL(5432 타임아웃) → **7 failed / 45 passed / 0 skipped** — 연결 실패 은폐 없음. (11-19 실기) 옵트인+URL 설정(개발 DB 대상) → 가드 **거부**로 2건 failed·왕복 미실행(안전 동작·표면화 — 아래 ⚠).
-    - ⚠ 설정 URL의 대상 DB가 보호 범용 DB(`4ddalla`)라 **가드가 거부 → 스크래치 왕복 실측 불가**(안전 동작·실패 표면화; 실기에서 보듯 강제 실행 시 2건 failed). 대상 소유·설정 확인 전 생성/업그레이드/다운그레이드/삭제 등 파괴적 단계 미실행; **권한 부여하지 않음**(기존 불변).
+  · 격리 강제 실행: (11-18 기록) 옵트인+URL 미설정 → 격리 2건 **failed**(44 passed/6 skipped, 파일 단위) — 전제 미충족은 skip 아님; 옵트인+도달불가 URL(5432 타임아웃) → **7 failed / 45 passed / 0 skipped** — 연결 실패 은폐 없음. (11-19 실기) 옵트인+URL 설정(개발 DB 대상) → 당시 가드가 앵커를 거부해 2건 failed·왕복 미실행 — 실제 대상(스크래치)과 접속 기준(앵커) 혼동으로 판정된 정책 오설계(2026-11-21 가드 정책 수정 — §M.3).
+     - ⚠ 11-19 실기 당시 설정 URL의 대상 DB가 개발용 `4ddalla`였고 가드(당시 정책)가 앵커를 거부해 **2건 failed·왕복 미실행** — 안전 실패 표면화였으나 원인은 정책 오설계 — 11-21 가드 정책 수정: `4ddalla` 등 앵커 허용 + 대상 스코프(생성·업그레이드·다운그레이드·삭제)=스크래치 UUID 강제 검증 + 서버·권한 사전 식별 + 불확실 시 미시작 (§M.3; 재실행은 엔진 도달 시).
   · 사후(읽기 전용) 스냅샷 = 사전과 동일(revision 001, 테이블 동일 집합, 스크래치 잔존 없음; 테스트 임시 표는 신규 테스트가 생성 후 정리) → **데이터·revision 불변 확인**.
   · 런타임 health 객체 없음(compose 정의 `healthcheck`≠실행 컨테이너) — 반영엔 재생성류 필요, 사용자 결정 사항, 이번에 변경하지 않음. 임시 스크립트(세션분) 정리 완료; 이전 관찰 미출처 3건 §I 유지.
+- 2026-11-21(본 티켓): 격리 가드 **정책 수정** — 앵커는 로컬 개발 루프백 DB 허용(`4ddalla` 등), 생성·업그레이드·다운그레이드·삭제 스코프=UUID 스크래치 강제 검증, 서버 식별·피어·CREATE 권한 사전 점검, 불확실 시 미시작(§M.3). 엔진 1회 확인 **미도달**(환경 차단 — 반복 재시도 안 함) → 격리 강제 실행·개발 DB 스냅샷·health 조회 **미실행**. 오프라인 DDL 방출 rc 0·구현 검사·DB-free 회귀 통과(§M.4).
 
 ## H. 개발 환경(관측값)
 
@@ -123,7 +124,7 @@
 
 ## J. 다음 세션 지시(우선 순서)
 
-1. `AGENTS.md` 읽기 → 2. 본 `Docs/HANDOFF.md` 읽기 → 3. 해당 명세 읽기 → 4. 실제 상태 재확인: `git status --short`, `git branch -avv`, `git log --oneline -5`, `git rev-parse develop main origin/main`, `git ls-remote --heads origin` — HANDOFF와 다르면 실제 상태 기준 갱신·차이 보고(원격 develop 변동 주체·시점 미확인 — 필요 시 사용자 확인) → 5. 다음 작업은 **현재 사용자 승인 티켓 지시 우선** — P1-DB-HARDEN-01·02 로컬 작업 완료(커밋 2026-11-17~19, 11-19 라이브 부분 재검증 §G); 잔여: 격리 스크래치 왕복(대상 소유·설정 확인 필요)·컨테이너 health 런타임(사용자 결정·환경 확인); 승인 대기: 원격 `develop` push(로컬 선두 1커밋 9cdd1bd — 50738e3 대비, 최근 확인)·main 병합·배포(§E). → 6. 라이브 DB 재검증 절차(필요 시): Docker Desktop 미가동이면 설치·재설치 금지·사용자 기동 요청 후 중단; 엔진 접속 확인 후 `4ddalla-db` 정지 시 `docker start 4ddalla-db`; `DATABASE_URL`은 로컬 `docker/.env` 유래로만 사용(값 비기록·문서/커밋/셸 이력 노출 회피); 강제 실행 `.venv\Scripts\python.exe -m pytest tests/test_db_layer.py -v`; Alembic `current`→`upgrade head`→표·버전 확인→`downgrade base`→재적용 확인; 보호 파일 `ses1`·`Docs/draft.md` 불변; 원격 push/PR/merge/deploy 금지.
+1. `AGENTS.md` 읽기 → 2. 본 `Docs/HANDOFF.md` 읽기 → 3. 해당 명세 읽기 → 4. 실제 상태 재확인: `git status --short`, `git branch -avv`, `git log --oneline -5`, `git rev-parse develop main origin/main`, `git ls-remote --heads origin` — HANDOFF와 다르면 실제 상태 기준 갱신·차이 보고(원격 develop 변동 주체·시점 미확인 — 필요 시 사용자 확인) → 5. 다음 작업은 **현재 사용자 승인 티켓 지시 우선** — P1-DB-HARDEN-01·02 로컬 작업 완료(커밋 2026-11-17~19, 11-19 라이브 부분 재검증 §G); 잔여: 격리 스크래치 왕복(대상 소유·설정 확인 필요)·컨테이너 health 런타임(사용자 결정·환경 확인); 승인 대기: 원격 `develop` push(로컬 선두 3커밋 9cdd1bd·3f53ef4·cabc15a — 50738e3 대비, 11-19~20 확인)·main 병합·배포(§E). → 6. 라이브 DB 확인(절차 분리): 개발 DB(`4ddalla`)는 **읽기 전용 점검만** — `alembic current`·revision/표 확인, 마이그레이션 적용 전 사전 점검(프로브 표 데이터 유무·예상 스키마 대조; 이탈 시 적용 중단). 마이그레이션 적용은 변경 티켓의 승인 범위에서 `upgrade head`로 수행(**개발 DB에서 `downgrade base` 실행 금지** — 스키마 복원 목적 다운그레이드는 일반 운영 절차가 아니며, 복원이 필요하면 별도 복구·백업 정책을 따른다). 파괴적 왕복(upgrade→downgrade→재적용, 스크래치 생성·삭제)은 **로컬 Docker PostgreSQL 서버의 UUID 스크래치 DB에서만**: `tests/test_db_layer.py`의 격리 검증(옵트인 `DDALLA_TEST_ISOLATED_MIGRATION_DB=1`)이 앵커·서버·권한·스코프를 사전 식별하고 생성·왕복·정리·잔존 여부를 확인하며, 식별이 불확실하면 시작하지 않는다. (구버전 가이드의 '개발 DB 대상 왕복' 서술은 폐기 — 역사 기록(§G 11-19 항목 등)에만 남김.)
 
 ## K. P1-DB-HARDEN-01 — ①·②·③ + 2차 리뷰 수정 + 2차 안정화 항목 완료 / 라이브 부분 재검증(2026-11-19)·잔여 보류(핸드오프 v14, 2026-11-17~20)
 
@@ -167,4 +168,18 @@
 - 본 갱신은 develop 로컬 커밋으로 반영(커밋 해시는 작업 보고에 명시). 핸드오프에 비밀정보 기록 금지 준수 — `.env` 실제 값 미기재.
 - 갱신: 2026-11-18 — 핸드오프 v11: 최종 검증 절차 시도 기록 — 비-DB 회귀(Ruff·기본 pytest 108 passed/8 skipped, 실패 0) 통과; 라이브 검증은 Docker Engine 3회 재시도 미도달로 전면 보류·미실행(설치·재설치·컨텍스트 변경 없음, 컨테이너·볼륨·DB 무접촉) — 사용자 기동 후 §J 6절차 재개. 라이브 `ls-remote`: 원격 `develop` = 1a438e5(로컬 HEAD 동일; 직전 보고 284150f에서 전진 — 주체·시점 미확인). `%LOCALAPPDATA%\Temp\opencode` 출처 미확인 진단 스크립트 3건 관찰·미접촉. 비밀정보 비기록 준수 — `.env` 실제 값 미기재.
 - 갱신: 2026-11-18 — 핸드오프 v12: P1-DB-HARDEN-02 안정화 항목 구현·기본 검증·커밋(77140e0·4dcf7ae; 문서 커밋 b1e2db0·2ed9b31·50738e3; Ruff 통과·기본 pytest 114 passed/8 skipped, 실패 0; 옵트인 강제 실행 시 전제 미충족·연결 실패가 skip 아님=failed로 확인). 라이브 항목은 당시 Engine 미도달로 보류·미실행(컨테이너·볼륨·DB 무접촉). 원격 `develop` = 59fe67b 재확인(읽기 전용; 2026-11-18) — 로컬 4커밋 앞섬(77140e0·4dcf7ae·b1e2db0·2ed9b31). 비밀정보 비기록 준수 — `.env` 실제 값 미기재.
-- 갱신: 2026-11-20 — 핸드오프 v14: 11-19 라이브 재검증 실측 수치 반영(§G·§K)과 잔여 항목 상태·참조 정합(§C·§E·§I·§J).
+- 갱신: 2026-11-21 — 핸드오프 v15: P1-DATA-01 1차 구현 기록(§M) — 검증된 항목과 미실행 항목 구분 명시. (커밋 해시는 작업 보고 참조)
+
+## M. P1-DATA-01 — 1차 도메인 스키마 구현(2026-11-21, 로컬·미적용)
+
+**사용자 티켓 기준: develop `cabc15a` 대비 구현 진행, develop 로컬 커밋 시리즈(해시는 작업 보고 참조).** HANDOFF보다 현재 코드·사용자 지시 우선; 충돌 발견 없음 — 초판 초안의 "같은 티켓 도메인 신설 안 함" 서술은 본 티켓으로 superseded(초안 §8 표기).
+
+**M.1 확정 설계(요약)** — brands / stores(nullable brand FK, category, operational_status, nullable geography(Point,4326)+GiST) / store_aliases(alias, valid_from/to+범위 CHECK) / sources(channel_type, canonical_url, collection_permission=공유 Enum, permitted_method) / source_links(source + **브랜드 또는 매장 중 정확히 하나** CHECK, identity_status=공유 Enum) / source_evidence(evidence_type, evidence_ref, verified_at). 기반: `Docs/DATA_MODEL.md` §2–§4·§6; 공유 Enum `SourceIdentityStatus`/`CollectionPermissionStatus`는 `app/contracts/enums.py`(ENGINE_SPEC §2) 재사용. 논리→물리 차이표: 초안 문서 §8.
+
+**M.2 산출물(로컬 작성·미적용)** — `app/db/models.py`(ORM), `alembic/versions/002_p1data01_domain_tables.py`(drop 검증 프로브 `p1db02_migration_probe` + 6 테이블 + FK/UNIQUE(없음 — URL 정규화 미확정)/CHECK/인덱스; downgrade=스키마 역복원+프로브 형태 재생성, **행 미복구** 명문화), `tests/test_domain_models.py`(구조 검사 9건), `alembic/env.py`(모델 등록 import), `requirements.txt`(geoalchemy2 핀), 문서: 초안 상태·차이표·최소 확정안/확장 방침. ※ 검증 전용 프로브뿐이던 `stores`/`brands` 등은 **001에 없음** → 신규 생성.
+
+**M.3 격리 가드 정책 수정(§3 완수)** — 앵커(로컬 루프백 DB, `4ddalla` 허용)와 마이그레이션 대상(스크래치) 분리; 스크래치=런타임 UUID 생성; 실행 직전 URL 재검증; 생성·업그레이드·다운그레이드·삭제 전부 스크래치 검증; 서버 식별·루프백 피어·CREATE/DELETE 권한 사전 점검; 실패 시 정리·잔존 확인; 불확실 시 미시작. `_PROTECTED_DBNAMES` 단순 삭제 아님 — 앵커 허용+타깃 스코프 강제로 재설계. 테스트 갱신·추가: 앵커 허용, 스크래치 명명·비충돌, 비루프백/비표준/미해석 거부, 모드/skip 의미론, 무결성·기계론 유지.
+
+**M.4 검증(실측 구분)** — `ruff check` All checks passed; 포매트(본 티켓 파일만); DB-free `pytest -q` **124 passed, 8 skipped**, 1 warning(기존 non-fatal). 오프라인 `alembic upgrade head --sql` **rc 0**: 6 CREATE TABLE·프로브 DROP·gist·FK 6·CHECK 4 방출 확인. **미실행(환경)**: 격리 강제 실행(엔진 미도달 — 1회 확인, 반복 안 함), 개발 DB 스냅샷, 헬스 조회, 002 라이브/개발 DB 적용. **미해결**: 격리 왕복·적용 판단은 검증 조건+사용자 결정 대기.
+
+**M.5 결정 게이트/미확정** — (i) 격리 왕복 → (ii) 개발 DB 사전점검(프로브 데이터·스키마 대조; 이탈 시 중단) → (iii) 적용 여부(사용자). 도메인 사전 통제(category/channel/operational/evidence 등)·정규화 URL 규칙·별칭 중복·삭제 정책 세부는 초안 §9 미확정 유지 — 본 구현에서 임의 확정 없음. 컨테이너 health 재생성은 11-19 기록대로 사용자 결정(볼륨 무사용 재생성 경로 검토, 타 프로젝트 무변경).

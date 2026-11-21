@@ -15,11 +15,16 @@ Three tiers, kept deliberately separable so the default run stays DB-free:
 - Isolation-verification (separate opt-in, ``DDALLA_TEST_ISOLATED_MIGRATION_DB``
   in {"1", "true", "yes", "on"}): the Alembic upgrade -> downgrade -> re-upgrade
   round-trip executed ONLY on a uniquely named scratch database, created and
-  dropped at runtime. ``downgrade base`` must never run against a general
-  database: the target is verified from parsed URL components (dialect, loopback
-  host, port, non-protected database), an unusable configuration in verification
-  mode FAILS instead of silently skipping, and cleanup runs even on failure.
-  """
+  dropped at runtime. The configured DATABASE_URL is the server ANCHOR (any
+  database of the local development loopback endpoint, dev DB ``4ddalla``
+  included); every destructive statement (create/upgrade/downgrade/drop) targets
+  only the runtime UUID scratch, which is re-verified from the URL in force
+  immediately before execution. The server identity (loopback peer, PostgreSQL
+  version) and CREATE/DROP privilege are pre-checked, the target is cross-checked
+  so identification uncertainty starts nothing, an unusable configuration in
+  verification mode FAILS instead of silently skipping, and cleanup runs even on
+  failure.
+"""
 
 from __future__ import annotations
 
@@ -76,9 +81,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _UNREACHABLE_URL = "postgresql+psycopg://test:test@127.0.0.1:1/testdb"
 
 # Isolation-policy constants (P1-DB-HARDEN-01). ``_PROTECTED_DBNAMES`` mirrors
-# the local dev DB name from docker/.env (POSTGRES_DB); safety never rests on a
-# variable name or a database name ALONE -- plan_isolated_target() verifies the
-# parsed dialect/host/port and generates the scratch name itself.
+# the local dev DB name from docker/.env (POSTGRES_DB); the name is an anchor
+# candidate, NEVER a migration target -- plan_isolated_target() generates the
+# scratch name itself and _isolated_roundtrip() rejects any scheme in which
+# create/upgrade/downgrade/drop could reach it, the maintenance DB "postgres",
+# or a second pre-existing scratch.
 _ISOLATION_ENV = "DDALLA_TEST_ISOLATED_MIGRATION_DB"
 _PROTECTED_DBNAMES = frozenset({"4ddalla"})
 _ALLOWED_HOSTS = frozenset({"127.0.0.1", "::1"})
@@ -127,11 +134,14 @@ def _skip_isolated_migration(env: Mapping[str, str] | None = None) -> bool:
 def plan_isolated_target(database_url: str, *, enabled: bool) -> tuple[URL, str]:
     """Verify a round-trip target and return (server URL, unique scratch name).
 
-    The server family must be the local development loopback endpoint on the
-    expected dialect/port and the configured database must not be a protected
-    general database. The scratch database name is generated here (never taken
-    from configuration), so it cannot collide with a real database. No
-    connection is opened and no target is modified.
+    ``database_url`` is the *server anchor* -- any database of the expected local
+    development loopback endpoint (the dev DB ``4ddalla`` included); the
+    round-trip never migrates or destroys the anchor. Parsed-URL checks cover
+    dialect/host/port and a present database name; the scratch name is generated
+    here (never taken from configuration) and must not collide with the anchor,
+    the maintenance DB ``postgres``, or protected names. No connection is opened
+    and no target is modified here -- the live server/privilege pre-flight runs
+    in ``_isolated_roundtrip`` right before anything is created.
     """
     if not enabled:
         raise IsolatedTargetError("isolated-migration mode is not enabled")
@@ -144,20 +154,42 @@ def plan_isolated_target(database_url: str, *, enabled: bool) -> tuple[URL, str]
     finally:
         engine.dispose()
     if url.drivername != _ALLOWED_DRIVERNAME:
-        raise IsolatedTargetError(
-            f"target must use the {_ALLOWED_DRIVERNAME} dialect"
-        )
+        raise IsolatedTargetError(f"target must use the {_ALLOWED_DRIVERNAME} dialect")
     if url.host not in _ALLOWED_HOSTS or url.port != _ALLOWED_PORT:
         raise IsolatedTargetError(
             "target must be the local development loopback endpoint"
         )
     if not url.database:
         raise IsolatedTargetError("target URL has no database name")
-    if url.database in _PROTECTED_DBNAMES:
+    scratch = f"{_SCRATCH_PREFIX}{uuid.uuid4()}"
+    if scratch in {_MAINTENANCE_DB, *_PROTECTED_DBNAMES, url.database}:
         raise IsolatedTargetError(
-            "refusing isolated migrations against a protected general database"
+            "generated scratch name collides with a real database"
         )
-    return url, f"{_SCRATCH_PREFIX}{uuid.uuid4().hex}"
+    return url, scratch
+
+
+def _check_live_server(connection) -> None:
+    """Pre-flight a maintenance connection before any DDL is attempted.
+
+    Verifies the live PostgreSQL identity, the expected local loopback peer, and
+    the current role's CREATE/DROP capability; insufficient identification or
+    privilege stops the round-trip before anything is created or dropped. Query
+    results are inspected, never echoed.
+    """
+    version = connection.execute(text("SHOW server_version")).scalar()
+    if not isinstance(version, str) or not version.strip():
+        raise RuntimeError("could not verify the PostgreSQL server identity")
+    peer = connection.execute(text("SELECT inet_client_addr()")).scalar()
+    if peer is not None and peer not in _ALLOWED_HOSTS:
+        raise RuntimeError("connection peer is not the expected local loopback address")
+    can_create = connection.execute(
+        text("SELECT rolcreatedb FROM pg_roles WHERE rolname = current_user")
+    ).scalar()
+    if can_create is not True:
+        raise RuntimeError(
+            "current role cannot create databases; refuse the isolated round-trip"
+        )
 
 
 def _drop_scratch(maintenance_engine, scratch: str) -> None:
@@ -170,7 +202,8 @@ def _drop_scratch(maintenance_engine, scratch: str) -> None:
             )
         with maintenance_engine.connect() as connection:
             row = connection.execute(
-                text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": scratch}
+                text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                {"name": scratch},
             ).fetchone()
         if row is not None:
             raise RuntimeError("scratch database still present after drop")
@@ -181,16 +214,22 @@ def _drop_scratch(maintenance_engine, scratch: str) -> None:
 def _isolated_roundtrip(database_url: str, monkeypatch: pytest.MonkeyPatch) -> str:
     """Run upgrade -> downgrade -> re-upgrade on a fresh scratch database.
 
-    The configured database is used only as the loopback server anchor; every
-    migration statement executes on the uniquely named scratch database, which
-    is dropped (and verified gone) afterwards -- including on failure.
+    The configured database is used only as the loopback server anchor; a live
+    pre-flight verifies the server identity, the loopback peer, and the
+    CREATE/DROP privilege of the connecting role, then all destructive
+    statements target the uniquely named scratch database, which is dropped (and
+    verified gone) afterwards -- including on failure. If the target cannot be
+    identified with certainty, nothing is created, migrated, or dropped.
     """
     server_url, scratch = plan_isolated_target(database_url, enabled=True)
     maintenance_engine = create_db_engine(server_url.set(database=_MAINTENANCE_DB))
+    created = False
     try:
         with maintenance_engine.connect() as connection:
             connection = connection.execution_options(isolation_level="AUTOCOMMIT")
+            _check_live_server(connection)
             connection.execute(text(f'CREATE DATABASE "{scratch}"'))
+            created = True
         target_url = server_url.set(database=scratch)
         monkeypatch.setenv("DATABASE_URL", str(target_url))
         # the URL actually in force must be the scratch database -- the
@@ -207,7 +246,11 @@ def _isolated_roundtrip(database_url: str, monkeypatch: pytest.MonkeyPatch) -> s
         command.downgrade(config, "base")
         command.upgrade(config, "head")
     finally:
-        _drop_scratch(maintenance_engine, scratch)
+        if created:
+            _drop_scratch(maintenance_engine, scratch)
+        else:
+            maintenance_engine.dispose()
+    return scratch
     return scratch
 
 
@@ -219,7 +262,9 @@ def _make_probe_app(*, table: str | None = None) -> FastAPI:
     """
     app = FastAPI()
     app.add_exception_handler(DatabaseUnavailableError, database_unavailable_handler)
-    app.add_exception_handler(DatabaseConfigurationError, database_configuration_handler)
+    app.add_exception_handler(
+        DatabaseConfigurationError, database_configuration_handler
+    )
 
     @app.get("/db_probe")
     def db_probe(db: Session = Depends(get_db)) -> dict[str, str]:  # noqa: B008
@@ -244,7 +289,7 @@ def _make_probe_app(*, table: str | None = None) -> FastAPI:
         def db_probe_violation(db: Session = Depends(get_db)) -> dict[str, str]:  # noqa: B008
             db.execute(text(f"INSERT INTO {quoted} (id) VALUES (1)"))
             db.commit()
-            db.execute(text(f'INSERT INTO {quoted} (id) VALUES (1)'))
+            db.execute(text(f"INSERT INTO {quoted} (id) VALUES (1)"))
             db.commit()
             return {"ok": "true"}
 
@@ -283,7 +328,10 @@ def test_database_url_empty_raises(value: str) -> None:
 
 
 def test_database_url_is_stripped() -> None:
-    assert get_database_url({"DATABASE_URL": f"  {_UNREACHABLE_URL}  "}) == _UNREACHABLE_URL
+    assert (
+        get_database_url({"DATABASE_URL": f"  {_UNREACHABLE_URL}  "})
+        == _UNREACHABLE_URL
+    )
 
 
 def test_get_engine_without_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -333,7 +381,9 @@ def test_failure_does_not_log_credentials(caplog: pytest.LogCaptureFixture) -> N
         SqlAlchemyTimeoutError("pool timed out"),
         psycopg.OperationalError("connection refused"),
         psycopg.InterfaceError("cannot use connection"),
-        SqlAlchemyOperationalError("SELECT 1", {}, psycopg.OperationalError("bootstrap")),
+        SqlAlchemyOperationalError(
+            "SELECT 1", {}, psycopg.OperationalError("bootstrap")
+        ),
         SqlAlchemyOperationalError("SELECT 1", {}, psycopg.InterfaceError("bootstrap")),
     ],
 )
@@ -373,7 +423,9 @@ class _RecordingSession:
         self.closed = True
 
 
-def _recording_session_factory(monkeypatch: pytest.MonkeyPatch) -> list[_RecordingSession]:
+def _recording_session_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[_RecordingSession]:
     created: list[_RecordingSession] = []
 
     def sessionmaker(**_kwargs: object) -> object:
@@ -471,7 +523,9 @@ def test_isolation_mode_unknown_value_rejected() -> None:
 
 def test_isolation_mode_enabled_values() -> None:
     for value in ("1", "true", "YES", " on "):
-        assert isolation_mode_enabled({"DDALLA_TEST_ISOLATED_MIGRATION_DB": value}) is True
+        assert (
+            isolation_mode_enabled({"DDALLA_TEST_ISOLATED_MIGRATION_DB": value}) is True
+        )
 
 
 def test_guard_refuses_without_mode() -> None:
@@ -479,9 +533,18 @@ def test_guard_refuses_without_mode() -> None:
         plan_isolated_target(_DEV_LIKE_URL, enabled=False)
 
 
-def test_guard_refuses_protected_general_database() -> None:
-    with pytest.raises(IsolatedTargetError):
-        plan_isolated_target(_DEV_LIKE_URL, enabled=True)
+def test_guard_allows_local_general_database_as_anchor() -> None:
+    """The dev DB is a valid *anchor*; the scratch is the only target."""
+    server_url, scratch = plan_isolated_target(_DEV_LIKE_URL, enabled=True)
+    assert server_url.database == "4ddalla"
+    assert scratch not in _PROTECTED_DBNAMES | {_MAINTENANCE_DB, "4ddalla"}
+
+
+def test_guard_never_returns_a_real_name_as_scratch() -> None:
+    for url in (_DEV_LIKE_URL, _DEV_LIKE_URL.replace("/4ddalla", "/other")):
+        _server_url, scratch = plan_isolated_target(url, enabled=True)
+        assert scratch.startswith(_SCRATCH_PREFIX) and "-" in scratch
+        assert scratch not in _PROTECTED_DBNAMES and scratch != _MAINTENANCE_DB
 
 
 @pytest.mark.parametrize(
@@ -499,7 +562,9 @@ def test_guard_refuses_non_local_or_unparseable_targets(url: str) -> None:
 
 
 def test_guard_generates_unique_scratch_name() -> None:
-    server_url, scratch = plan_isolated_target(_DEV_LIKE_URL.replace("/4ddalla", "/other"), enabled=True)
+    server_url, scratch = plan_isolated_target(
+        _DEV_LIKE_URL.replace("/4ddalla", "/other"), enabled=True
+    )
     assert server_url.host in _ALLOWED_HOSTS
     assert scratch.startswith(_SCRATCH_PREFIX)
     _other_url, other_scratch = plan_isolated_target(
@@ -564,7 +629,8 @@ def test_endpoint_connection_failure_is_static_503(
         leaked = [
             record
             for record in caplog.records
-            if "test:test" in record.getMessage() or "postgresql+psycopg" in record.getMessage()
+            if "test:test" in record.getMessage()
+            or "postgresql+psycopg" in record.getMessage()
         ]
         assert leaked == []
         assert engine.pool.checkedout() == 0
@@ -599,15 +665,21 @@ class TestLiveDatabase:
                     text(f"CREATE TABLE {quoted} (id integer PRIMARY KEY, note text)")
                 )
             with Session(engine) as session:
-                session.execute(text(f"INSERT INTO {quoted} (id, note) VALUES (1, 'a')"))
+                session.execute(
+                    text(f"INSERT INTO {quoted} (id, note) VALUES (1, 'a')")
+                )
                 session.commit()
                 assert (
-                    session.execute(text(f"SELECT count(*) FROM {quoted}")).scalar_one() == 1
+                    session.execute(text(f"SELECT count(*) FROM {quoted}")).scalar_one()
+                    == 1
                 )
-                session.execute(text(f"INSERT INTO {quoted} (id, note) VALUES (2, 'b')"))
+                session.execute(
+                    text(f"INSERT INTO {quoted} (id, note) VALUES (2, 'b')")
+                )
                 session.rollback()
                 assert (
-                    session.execute(text(f"SELECT count(*) FROM {quoted}")).scalar_one() == 1
+                    session.execute(text(f"SELECT count(*) FROM {quoted}")).scalar_one()
+                    == 1
                 )
         finally:
             with engine.begin() as connection:
@@ -660,12 +732,17 @@ class TestLiveDatabase:
                 connection.execute(
                     text(f"CREATE TABLE {quoted} (id integer PRIMARY KEY, note text)")
                 )
-            client = TestClient(_make_probe_app(table=table), raise_server_exceptions=False)
+            client = TestClient(
+                _make_probe_app(table=table), raise_server_exceptions=False
+            )
             response = client.get("/db_probe_rollback")
             assert response.status_code == 500
             assert "probe failure" not in response.text
             with Session(engine) as session:
-                assert session.execute(text(f"SELECT count(*) FROM {quoted}")).scalar_one() == 0
+                assert (
+                    session.execute(text(f"SELECT count(*) FROM {quoted}")).scalar_one()
+                    == 0
+                )
             assert engine.pool.checkedout() == 0
         finally:
             with engine.begin() as connection:
@@ -681,12 +758,17 @@ class TestLiveDatabase:
                 connection.execute(
                     text(f"CREATE TABLE {quoted} (id integer PRIMARY KEY, note text)")
                 )
-            client = TestClient(_make_probe_app(table=table), raise_server_exceptions=False)
+            client = TestClient(
+                _make_probe_app(table=table), raise_server_exceptions=False
+            )
             response = client.get("/db_probe_violation")
             assert response.status_code == 500
             assert response.status_code != 503
             with Session(engine) as session:
-                assert session.execute(text(f"SELECT count(*) FROM {quoted}")).scalar_one() == 1
+                assert (
+                    session.execute(text(f"SELECT count(*) FROM {quoted}")).scalar_one()
+                    == 1
+                )
             assert engine.pool.checkedout() == 0
         finally:
             with engine.begin() as connection:
