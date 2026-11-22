@@ -3,7 +3,9 @@
 Upgrade drops the verification-only ``p1db02_migration_probe`` (P1-DB-02 gain:
 real domain tables now exist) and creates the first domain tables with the
 constraints/indexes designed per ``Docs/DATA_MODEL.md`` and
-``Docs/P1-DATA-01-physical-draft.md``.
+``Docs/P1-DATA-01-physical-draft.md``. Because the schema uses a ``geography``
+column, the target database must have the PostGIS extension available (enabled
+before migrating; a fresh scratch database does not inherit it).
 
 Downgrade reverses the order and restores the probe shape. It is **schema
 restoration only**: rows dropped by ``p1db02_migration_probe`` or by any domain
@@ -61,7 +63,9 @@ def upgrade() -> None:
         sa.Column("category", sa.Text(), nullable=True),
         sa.Column("operational_status", sa.Text(), nullable=True),
         sa.Column(
-            "location", Geography(geometry_type="POINT", srid=4326), nullable=True
+            "location",
+            Geography(geometry_type="POINT", srid=4326, spatial_index=False),
+            nullable=True,
         ),
         sa.Column("created_at", _UTC, nullable=False, server_default=sa.func.now()),
         sa.Column(
@@ -74,7 +78,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_stores_brand_id", "stores", ["brand_id"])
     op.create_index(
-        "ix_stores_location", "stores", ["location"], postgresql_using="gist"
+        "ix_stores_location_gist", "stores", ["location"], postgresql_using="gist"
     )
 
     op.create_table(
@@ -210,7 +214,9 @@ def downgrade() -> None:
     op.drop_index("ix_store_aliases_store_id", table_name="store_aliases")
     op.drop_table("store_aliases")
 
-    op.drop_index("ix_stores_location", table_name="stores", postgresql_using="gist")
+    op.drop_index(
+        "ix_stores_location_gist", table_name="stores", postgresql_using="gist"
+    )
     op.drop_index("ix_stores_brand_id", table_name="stores")
     op.drop_table("stores")
 

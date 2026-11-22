@@ -15,7 +15,8 @@ Three tiers, kept deliberately separable so the default run stays DB-free:
 - Isolation-verification (separate opt-in, ``DDALLA_TEST_ISOLATED_MIGRATION_DB``
   in {"1", "true", "yes", "on"}): the Alembic upgrade -> downgrade -> re-upgrade
   round-trip executed ONLY on a uniquely named scratch database, created and
-  dropped at runtime. The configured DATABASE_URL is the server ANCHOR (any
+  dropped at runtime and verified in phases against the released chain (001 ->
+  head -> 001 -> head). The configured DATABASE_URL is the server ANCHOR (any
   database of the local development loopback endpoint, dev DB ``4ddalla``
   included); every destructive statement (create/upgrade/downgrade/drop) targets
   only the runtime UUID scratch, which is re-verified from the URL in force
@@ -23,7 +24,10 @@ Three tiers, kept deliberately separable so the default run stays DB-free:
   version) and CREATE/DROP privilege are pre-checked, the target is cross-checked
   so identification uncertainty starts nothing, an unusable configuration in
   verification mode FAILS instead of silently skipping, and cleanup runs even on
-  failure.
+  failure. Because the chain's DDL uses a ``geography`` column, the scratch
+  database has to have the PostGIS extension enabled before the chain runs (a
+  fresh database does not inherit it); a failure to enable it aborts the
+  round-trip without privilege escalation, and cleanup still runs.
 """
 
 from __future__ import annotations
@@ -93,6 +97,12 @@ _ALLOWED_PORT = 5432
 _ALLOWED_DRIVERNAME = "postgresql+psycopg"
 _MAINTENANCE_DB = "postgres"
 _SCRATCH_PREFIX = "p1db02_iso_"
+# Expected P1-DATA-01 domain set (alembic revision 002) and the 001-era probe
+# table that 002 drops (its downgrade restores the schema, not rows)
+_DOMAIN_TABLES = frozenset(
+    {"brands", "stores", "store_aliases", "sources", "source_links", "source_evidence"}
+)
+_PROBE_TABLE = "p1db02_migration_probe"
 _DEV_LIKE_URL = "postgresql+psycopg://4ddalla:fake-pw@127.0.0.1:5432/4ddalla"
 
 
@@ -176,6 +186,15 @@ def _check_live_server(connection) -> None:
     the current role's CREATE/DROP capability; insufficient identification or
     privilege stops the round-trip before anything is created or dropped. Query
     results are inspected, never echoed.
+
+    The peer must be a loopback address (``inet_client_addr()`` NULL means a
+    local Unix-socket connection and is accepted). A peer on a Docker bridge
+    network (e.g. ``172.17.0.x``) is refused: from the server side that address
+    cannot be attributed to the expected local project, and the round-trip
+    client is expected to run on the host against the loopback endpoint (the
+    target plan already requires a loopback URL). Such a peer indicates a
+    topology the guard cannot positively identify, so it stops the round-trip
+    instead of being guessed at.
     """
     version = connection.execute(text("SHOW server_version")).scalar()
     if not isinstance(version, str) or not version.strip():
@@ -211,15 +230,87 @@ def _drop_scratch(maintenance_engine, scratch: str) -> None:
         maintenance_engine.dispose()
 
 
-def _isolated_roundtrip(database_url: str, monkeypatch: pytest.MonkeyPatch) -> str:
-    """Run upgrade -> downgrade -> re-upgrade on a fresh scratch database.
+def _isolated_schema_state(
+    database_url: str,
+) -> tuple[bool, frozenset[str], str | None]:
+    """Read (probe present, domain tables present, alembic revision) from target.
 
-    The configured database is used only as the loopback server anchor; a live
-    pre-flight verifies the server identity, the loopback peer, and the
-    CREATE/DROP privilege of the connecting role, then all destructive
-    statements target the uniquely named scratch database, which is dropped (and
-    verified gone) afterwards -- including on failure. If the target cannot be
-    identified with certainty, nothing is created, migrated, or dropped.
+    Read-only introspection of one database; the caller decides which state is
+    acceptable at each phase of the isolated round-trip.
+    """
+    engine = create_db_engine(database_url)
+    try:
+        names = set(inspect(engine).get_table_names())
+        revision: str | None
+        with engine.connect() as connection:
+            revision = connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar()
+    except SQLAlchemyError:
+        raise RuntimeError("isolated database schema state could not be read") from None
+    finally:
+        engine.dispose()
+    domain = frozenset(name for name in _DOMAIN_TABLES if name in names)
+    return _PROBE_TABLE in names, domain, revision
+
+
+def _enable_postgis(engine) -> None:
+    """Enable the PostGIS extension in a fresh scratch database.
+
+    A geography column cannot exist without the extension, and a newly created
+    database does not inherit it; a failure (missing package or insufficient
+    privilege) aborts the round-trip -- nothing here escalates privileges.
+    """
+    try:
+        with engine.connect() as connection:
+            connection = connection.execution_options(isolation_level="AUTOCOMMIT")
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+            row = connection.execute(
+                text("SELECT extversion FROM pg_extension WHERE extname = 'postgis'")
+            ).fetchone()
+    except Exception:  # noqa: BLE001 - driver/permission errors vary; static text only
+        raise RuntimeError(
+            "PostGIS extension could not be enabled on the isolated scratch "
+            "database; aborting"
+        ) from None
+    if row is None or not row[0]:
+        raise RuntimeError(
+            "PostGIS is not available on the isolated scratch database; aborting"
+        )
+
+
+def _assert_single_location_gist_index(database_url: str) -> None:
+    """The domain schema must carry exactly one GiST index on stores.location."""
+    engine = create_db_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT indexname FROM pg_indexes "
+                    "WHERE tablename = 'stores' AND indexdef ILIKE '%gist%'"
+                )
+            ).fetchall()
+    finally:
+        engine.dispose()
+    assert [row[0] for row in rows] == ["ix_stores_location_gist"], (
+        "expected exactly one GiST index named ix_stores_location_gist on "
+        f"stores.location, found {len(rows)}"
+    )
+
+
+def _isolated_roundtrip(database_url: str, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Run the released chain in phases: 001 -> head -> 001 -> head.
+
+    Scratch schema state is asserted at each phase: 001 must show the
+    verification probe; head must show it dropped with the six domain tables;
+    the 001 downgrade must remove the domain tables and restore the probe shape
+    (schema only -- rows are not recovered); the final head must be the released
+    state again. The configured database is used only as the loopback server
+    anchor; a live pre-flight verifies the server identity, the loopback peer,
+    and the CREATE/DROP privilege of the connecting role; the scratch database
+    has PostGIS enabled as a DDL prerequisite, is dropped and verified gone
+    afterwards -- including on failure. If the target cannot be identified with
+    certainty, nothing is created, migrated, or dropped.
     """
     server_url, scratch = plan_isolated_target(database_url, enabled=True)
     maintenance_engine = create_db_engine(server_url.set(database=_MAINTENANCE_DB))
@@ -230,27 +321,34 @@ def _isolated_roundtrip(database_url: str, monkeypatch: pytest.MonkeyPatch) -> s
             _check_live_server(connection)
             connection.execute(text(f'CREATE DATABASE "{scratch}"'))
             created = True
+        scratch_engine = create_db_engine(server_url.set(database=scratch))
+        try:
+            _enable_postgis(scratch_engine)
+        finally:
+            scratch_engine.dispose()
         target_url = server_url.set(database=scratch)
         monkeypatch.setenv("DATABASE_URL", str(target_url))
         # the URL actually in force must be the scratch database -- the
         # configured general database is only used as the server anchor
         assert get_database_url().endswith(f"/{scratch}")
         config = Config(str(PROJECT_ROOT / "alembic.ini"))
+        # phased verification against the released chain: 001 creates the
+        # verification probe; 002 drops it and creates the domain tables; the
+        # 001 downgrade restores the probe shape (schema only, no row recovery)
+        command.upgrade(config, "001")
+        assert _isolated_schema_state(target_url) == (True, frozenset(), "001")
         command.upgrade(config, "head")
-        inspector_engine = create_db_engine(target_url)
-        try:
-            assert inspector_engine.url.database == scratch
-            assert inspect(inspector_engine).has_table("p1db02_migration_probe")
-        finally:
-            inspector_engine.dispose()
-        command.downgrade(config, "base")
+        assert _isolated_schema_state(target_url) == (False, _DOMAIN_TABLES, "002")
+        command.downgrade(config, "001")
+        assert _isolated_schema_state(target_url) == (True, frozenset(), "001")
         command.upgrade(config, "head")
+        assert _isolated_schema_state(target_url) == (False, _DOMAIN_TABLES, "002")
+        _assert_single_location_gist_index(target_url)
     finally:
         if created:
             _drop_scratch(maintenance_engine, scratch)
         else:
             maintenance_engine.dispose()
-    return scratch
     return scratch
 
 
@@ -594,6 +692,61 @@ def test_skip_condition_rejects_unrecognized_value() -> None:
     """A typo in the verification switch fails loudly, never silently skips."""
     with pytest.raises(IsolatedTargetError):
         _skip_isolated_migration({_ISOLATION_ENV: "maybe"})
+
+
+class _FakeResult:
+    """Minimal execute()-result double (only ``scalar()`` is used)."""
+
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def scalar(self) -> object:
+        return self._value
+
+
+class _FakeConnection:
+    """Duck-typed connection for ``_check_live_server`` pre-flight checks."""
+
+    def __init__(
+        self,
+        *,
+        server_version: str = "17.12",
+        peer: str | None = "127.0.0.1",
+        can_create: bool = True,
+    ) -> None:
+        self._server_version = server_version
+        self._peer = peer
+        self._can_create = can_create
+
+    def execute(self, statement: object) -> _FakeResult:
+        text_ = str(statement)
+        if "SHOW server_version" in text_:
+            return _FakeResult(self._server_version)
+        if "inet_client_addr" in text_:
+            return _FakeResult(self._peer)
+        if "rolcreatedb" in text_:
+            return _FakeResult(self._can_create)
+        raise AssertionError(f"unexpected statement: {text_}")
+
+
+@pytest.mark.parametrize("peer", ["127.0.0.1", "::1", None])
+def test_check_live_server_accepts_loopback_peer(peer: str | None) -> None:
+    _check_live_server(_FakeConnection(peer=peer))
+
+
+@pytest.mark.parametrize("peer", ["172.17.0.1", "10.0.0.5"])
+def test_check_live_server_refuses_non_loopback_peer(peer: str) -> None:
+    """Bridge/private peers cannot be attributed to the expected project."""
+    with pytest.raises(RuntimeError, match="loopback") as excinfo:
+        _check_live_server(_FakeConnection(peer=peer))
+    assert peer not in str(excinfo.value)
+
+
+def test_check_live_server_refuses_missing_identity_or_privilege() -> None:
+    with pytest.raises(RuntimeError, match="server identity"):
+        _check_live_server(_FakeConnection(server_version=""))
+    with pytest.raises(RuntimeError, match="create databases"):
+        _check_live_server(_FakeConnection(can_create=False))
 
 
 def test_endpoint_non_connection_sqlaerror_is_not_503() -> None:

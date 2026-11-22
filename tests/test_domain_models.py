@@ -94,17 +94,22 @@ def test_source_links_and_evidence_fk_policy():
     assert _fk_actions(_table("store_aliases")) == {"RESTRICT"}
 
 
-def test_store_location_is_nullable_geography_point_4326_with_gist():
+def test_store_location_is_nullable_geography_point_4326_with_single_gist():
     location = _table("stores").c.location
     assert location.nullable is True
     assert isinstance(location.type, Geography)
     assert location.type.srid == 4326
     assert location.type.geometry_type.upper() == "POINT"
-    indexes = _table("stores").indexes
-    assert any(
-        index.dialect_options.get("postgresql", {}).get("using") == "gist"
-        for index in indexes
-    )
+    indexes = [
+        index
+        for index in _table("stores").indexes
+        if set(index.columns.keys()) == {"location"}
+    ]
+    # exactly one spatial index on location: the named one. GeoAlchemy2's
+    # implicit spatial index is not requested (spatial_index=False on the
+    # column), so no duplicate GiST index can exist in the metadata.
+    assert [index.name for index in indexes] == ["ix_stores_location_gist"]
+    assert indexes[0].dialect_options.get("postgresql", {}).get("using") == "gist"
 
 
 def test_identity_and_authority_fields_are_distinct_columns():

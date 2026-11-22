@@ -69,8 +69,11 @@ class Store(Base):
     )
     category: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
     operational_status: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
+    # spatial_index=False: GeoAlchemy2's implicit index is not requested; the
+    # single named GiST index lives in __table_args__ below (name parity with
+    # alembic 002 -- avoids duplicate spatial indexes and autogenerate churn)
     location: Mapped[str | None] = mapped_column(  # type: ignore[assignment]
-        Geography(geometry_type="POINT", srid=4326), nullable=True
+        Geography(geometry_type="POINT", srid=4326, spatial_index=False), nullable=True
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
