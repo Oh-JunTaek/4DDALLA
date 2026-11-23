@@ -106,7 +106,7 @@
 ## H. 개발 환경(관측값)
 
 - Python 3.11.9; `.venv` 사용(관측: pytest 9.2.0; ruff 0.17.3 관측 후 2026-11-17 `.venv\Scripts\ruff.exe --version` = 0.17.4로 requirements 핀과 일치 — 그 사이 환경 갱신 경위는 미확인).
-- Node v24.21.0, npm 11.19.0, Git(로컬 user: Oh-JunTaek <aa39043533@gmail.com>).
+- Node v24.21.0, npm 11.19.0, Git config observed (name/email withheld — personal data, 핸드오프 비기록 원칙).
 - Docker CLI 29.9.3 + compose 플러그인. 컨텍스트 2개: `default`(npipe docker_engine)·`desktop-linux`(진단 시점 현재 선택). 진단 단계에선 `desktop-linux` 엔진 연결이 실패했고 Desktop 실행 파일 일반 경로·서비스·파이프도 미확인이었으나, **사용자가 Docker Desktop 최초 실행·초기 설정을 완료(2026-11-15)한 뒤 Engine 연결 정상 확인**(`docker info` ServerVersion 29.9.3) — 이전 "설치/실행 미확인" 관측은 이 시점 기준으로 해소. 단, 그 이전 항목들은 당시 기준 기록으로 보존. 2026-11-18: 현재 컨텍스트 엔드포인트(npipe dockerDesktopLinuxEngine) 부재로 Engine 도달 불가 — 20초 간격 3회 재시도 동일; 설치·재설치·컨텍스트 우회 없음, 사용자 기동 필요(§G). **2026-11-19: Engine 접속 성공(29.9.3)·컨테이너 기동·라이브 검증 진행** — 그간 미도달의 계기·경로·일시 미상(단정 금지, 기록만); 잔여 미실행 항목은 필요 시 §J 6절차.
 - WSL: `wsl` 명령 동작. 진단 시점 배포판 목록에 `docker-desktop` Stopped(컬럼 값 2 — 출력 인코딩 일부 깨짐, 판독 한계), `wsl --status` 세부 출력 판독 불가. 이후 WSL 배포판 상태 재측정은 안 함(DB 작업에 불필요 — Engine은 Desktop 컨텍스트로 동작).
 - 가상화·하드웨어(CIM 관측값, 신뢰도 한계 명시 — 미지원 단정 금지): HypervisorPresent True, VirtualizationFirmwareEnabled True, SecondLevelAddressTranslationExtensions False, Windows 11 Pro 빌드 26300, AMD Ryzen 5 7500X3D 6코어/12스레드, 물리 메모리 ≈31GiB, 보드 Gigabyte B650M K.
