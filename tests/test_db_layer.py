@@ -36,6 +36,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import uuid
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -61,7 +62,11 @@ from sqlalchemy.exc import (
 from sqlalchemy.orm import Session
 
 from alembic import command
-from app.db import dependencies
+from app.db import (
+    dependencies,
+    models,  # noqa: F401  -- register the domain tables on Base.metadata
+)
+from app.db.base import Base
 from app.db.config import get_database_url
 from app.db.dependencies import (
     _is_connection_failure,
@@ -104,6 +109,18 @@ _DOMAIN_TABLES = frozenset(
 )
 _PROBE_TABLE = "p1db02_migration_probe"
 _DEV_LIKE_URL = "postgresql+psycopg://4ddalla:fake-pw@127.0.0.1:5432/4ddalla"
+
+# Docker-side identification for the conditional bridge-peer allowance (§2
+# of the final verification ticket). Identified from read-only Docker
+# metadata at every verification run -- nothing network-side is trusted from
+# constants, and nothing here is a general service-connection policy: the
+# allowance is scoped to this isolated verification harness ("4ddalla" dev
+# container), never to map/place sources or other projects.
+_EXPECTED_CONTAINER = "4ddalla-db"
+_EXPECTED_IMAGE = "postgis/postgis:17-3.7"
+_EXPECTED_COMPOSE_PROJECT = "docker"
+_EXPECTED_COMPOSE_SERVICE = "db"
+_EXPECTED_PUBLISHED = ("5432/tcp", "127.0.0.1", "5432")
 
 
 class IsolatedTargetError(RuntimeError):
@@ -179,40 +196,176 @@ def plan_isolated_target(database_url: str, *, enabled: bool) -> tuple[URL, str]
     return url, scratch
 
 
-def _check_live_server(connection) -> None:
+def _docker_inspect_json(container: str) -> object:
+    """Read-only ``docker inspect`` payload for one named container.
+
+    Raises ``RuntimeError`` (static, credential-free text) when the CLI/engine
+    is unavailable, the container is missing, the call times out, or the
+    payload cannot be parsed: identification uncertainty aborts the isolated
+    round-trip before any DDL is attempted.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "--format", "{{json .}}", container],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except OSError:
+        raise RuntimeError(
+            "docker CLI is not available; cannot identify the target container"
+        ) from None
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            "docker inspect timed out; container identification is uncertain"
+        ) from None
+    if result.returncode != 0:
+        raise RuntimeError(
+            "docker inspect failed; container identification is uncertain"
+        ) from None
+    try:
+        payload = json.loads(result.stdout)
+    except ValueError:
+        raise RuntimeError("docker inspect payload could not be parsed") from None
+    if not isinstance(payload, dict):
+        raise TypeError("docker inspect payload must be an object")
+    return payload
+
+
+def _docker_container_context(
+    container: str = _EXPECTED_CONTAINER,
+) -> dict[str, object]:
+    """Identify the expected local container from Docker metadata (read-only)."""
+    return _container_from_payload(_docker_inspect_json(container), container)
+
+
+def _container_from_payload(payload: object, container: str) -> dict[str, object]:
+    """Validate a parsed ``docker inspect`` payload (seam for DB-free tests).
+
+    Confirms: a running container with the expected name; the expected image and
+    Compose project/service; the published binding ``127.0.0.1:5432 ->
+    container 5432``; and extracts the container's network gateway address(es)
+    -- the value(s) the server-observed client peer is compared against.
+    Raises ``RuntimeError`` on any missing/mismatched metadata: identification
+    failure; not a boundary to widen.
+    """
+    if not isinstance(payload, dict):
+        raise TypeError("docker inspect payload must be an object")
+    if str(payload.get("Name", "")).lstrip("/") != container:
+        raise RuntimeError("docker container identity does not match expectation")
+    state = payload.get("State")
+    if not isinstance(state, dict) or state.get("Running") is not True:
+        raise RuntimeError("docker container is not running")
+    config = payload.get("Config")
+    config = config if isinstance(config, dict) else {}
+    image = str(config.get("Image", ""))
+    image_ref = image.split("@", 1)[0]
+    if image_ref != _EXPECTED_IMAGE:
+        raise RuntimeError(
+            "docker container image does not match the compose definition"
+        )
+    labels = config.get("Labels")
+    if not isinstance(labels, dict):
+        raise TypeError("docker Compose metadata must be a mapping")
+    if labels.get("com.docker.compose.project") != _EXPECTED_COMPOSE_PROJECT:
+        raise RuntimeError("docker Compose project does not match the expected project")
+    if labels.get("com.docker.compose.service") != _EXPECTED_COMPOSE_SERVICE:
+        raise RuntimeError("docker Compose service does not match the expected service")
+    container_id = str(payload.get("Id", ""))
+    if not container_id:
+        raise RuntimeError("docker container identifier is unavailable")
+    network_settings = payload.get("NetworkSettings")
+    network_settings = network_settings if isinstance(network_settings, dict) else {}
+    ports = network_settings.get("Ports")
+    ports = ports if isinstance(ports, dict) else {}
+    published = ports.get(_EXPECTED_PUBLISHED[0])
+    published = published if isinstance(published, list) else []
+    bindings = [p for p in published if isinstance(p, dict)]
+    if (
+        len(bindings) != 1
+        or bindings[0].get("HostIp") != _EXPECTED_PUBLISHED[1]
+        or bindings[0].get("HostPort") != _EXPECTED_PUBLISHED[2]
+    ):
+        raise RuntimeError(
+            "docker published port does not match the expected 127.0.0.1:5432 binding"
+        )
+    networks = network_settings.get("Networks")
+    networks = networks if isinstance(networks, dict) else {}
+    gateways: set[str] = set()
+    for network in networks.values():
+        if not isinstance(network, dict):
+            continue
+        gateway = network.get("Gateway")
+        if isinstance(gateway, str) and gateway.strip():
+            gateways.add(gateway.strip())
+        ipam = network.get("IPAMConfig")
+        if isinstance(ipam, list):
+            for entry in ipam:
+                if isinstance(entry, dict):
+                    gateway = entry.get("Gateway")
+                    if isinstance(gateway, str) and gateway.strip():
+                        gateways.add(gateway.strip())
+    return {
+        "container": container,
+        "id": container_id,
+        "image": image,
+        "project": _EXPECTED_COMPOSE_PROJECT,
+        "service": _EXPECTED_COMPOSE_SERVICE,
+        "published": _EXPECTED_PUBLISHED,
+        "gateways": frozenset(gateways),
+        "running": True,
+    }
+
+
+def _context_gateways(container_context: object) -> frozenset[str]:
+    """Extract the confirmed gateway set from a container context (empty if absent)."""
+    if not isinstance(container_context, dict):
+        return frozenset()
+    gateways = container_context.get("gateways")
+    if not isinstance(gateways, (set, frozenset)):
+        return frozenset()
+    return frozenset(
+        item for item in gateways if isinstance(item, str) and item.strip()
+    )
+
+
+def _check_live_server(connection, *, container_context: object = None) -> None:
     """Pre-flight a maintenance connection before any DDL is attempted.
 
-    Verifies the live PostgreSQL identity, the expected local loopback peer, and
-    the current role's CREATE/DROP capability; insufficient identification or
-    privilege stops the round-trip before anything is created or dropped. Query
-    results are inspected, never echoed.
+    Verifies the live PostgreSQL identity, the connection peer, and the current
+    role's CREATE/DROP capability, and that a supplied container context (from
+    ``_docker_container_context``) matches the deployment being verified;
+    insufficient identification or privilege stops the round-trip before
+    anything is created or dropped. Query results are inspected, never echoed.
 
-    The peer must be a loopback address (``inet_client_addr()`` NULL means a
-    local Unix-socket connection and is accepted). Measured fact (2026-11-23,
-    live, psycopg 3 + SQLAlchemy 2.0): the driver returns the inet value as an
-    ``ipaddress`` object (IPv4Address), not a string, and a host client reaching
-    this project's container through a Docker *published* port is recorded
-    server-side as the Docker bridge gateway (observed ``172.18.0.1``), not the
-    client's ``127.0.0.1``. An address by itself therefore cannot be attributed
-    to a project from the database alone: loopback/NULL peers are the
-    identifiable local path and are accepted; any other peer (bridge gateway,
-    LAN, VPN, remote) does not positively identify the expected local project
-    and stops the round-trip until the environment is confirmed. This is a
-    plain, non-allowlist-loosening classification, not a removal of the guard;
-    the target plan independently requires a parsed loopback URL.
+    Peer policy: NULL (local socket) and loopback peers are always accepted;
+    otherwise the peer must match a network gateway confirmed from Docker
+    metadata for the expected project container (``container_context``).
+    Without a usable context, only loopback/NULL is accepted. An address is
+    never trusted from constants, a private-range blanket rule, or a database
+    name -- Docker metadata and/or a direct loopback connection must identify
+    the path, and uncertainty refuses. This allowance is scoped to the isolated
+    verification harness and does not modify the service connection policy.
     """
     version = connection.execute(text("SHOW server_version")).scalar()
     if not isinstance(version, str) or not version.strip():
         raise RuntimeError("could not verify the PostgreSQL server identity")
+    user = connection.execute(text("SELECT current_user")).scalar()
+    if not isinstance(user, str) or not user.strip():
+        raise RuntimeError("could not verify the PostgreSQL role identity")
     peer = connection.execute(text("SELECT inet_client_addr()")).scalar()
     if peer is not None:
         # psycopg3/SQLAlchemy may surface inet as an ipaddress object; compare
         # the normalized textual address against the same exact allowlist.
         peer_text = peer if isinstance(peer, str) else str(peer)
-        if peer_text not in _ALLOWED_HOSTS:
+        if peer_text not in _ALLOWED_HOSTS and peer_text not in _context_gateways(
+            container_context
+        ):
             raise RuntimeError(
-                "connection peer is not the expected local loopback address; "
-                "an unidentifiable network path stops the round-trip"
+                "connection peer is not the expected local loopback address or a "
+                "metadata-confirmed gateway for the expected container; an "
+                "unidentifiable network path stops the round-trip"
             )
     can_create = connection.execute(
         text("SELECT rolcreatedb FROM pg_roles WHERE rolname = current_user")
@@ -329,6 +482,109 @@ def _assert_single_location_gist_index(database_url: str) -> None:
     )
 
 
+def _assert_constraints_enforced(database_url: str) -> None:
+    """FK/CHECK violations must fail on the live schema (scratch DB only)."""
+    engine = create_db_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO brands (id, canonical_name) VALUES "
+                    "('00000000-0000-0000-0000-0000000000b0', 'probe-brand')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO stores (id) VALUES ('00000000-0000-0000-0000-0000000000b1')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO sources (channel_type, canonical_url, collection_permission) "
+                    "VALUES ('probe', 'https://example.invalid/probe', 'ALLOWED')"
+                )
+            )
+        violations = (
+            (
+                "source_links FK (dangling source)",
+                (
+                    "INSERT INTO source_links (id, source_id, identity_status) VALUES "
+                    "('00000000-0000-0000-0000-0000000000c1', "
+                    "'00000000-0000-0000-0000-0000000000ff', 'VERIFIED')"
+                ),
+            ),
+            (
+                "source_links CHECK (brand xor store target)",
+                (
+                    "INSERT INTO source_links (id, source_id, brand_id, store_id, identity_status) VALUES "
+                    "('00000000-0000-0000-0000-0000000000c2', "
+                    "'00000000-0000-0000-0000-0000000000b2', "
+                    "'00000000-0000-0000-0000-0000000000b0', "
+                    "'00000000-0000-0000-0000-0000000000b1', 'VERIFIED')"
+                ),
+            ),
+            (
+                "source_links CHECK (identity_status value)",
+                (
+                    "INSERT INTO source_links (id, source_id, identity_status) VALUES "
+                    "('00000000-0000-0000-0000-0000000000c3', "
+                    "'00000000-0000-0000-0000-0000000000b3', 'NOT_A_STATUS')"
+                ),
+            ),
+        )
+        for _label, statement in violations:
+            with engine.begin() as connection, pytest.raises(IntegrityError):
+                connection.execute(text(statement))
+    finally:
+        engine.dispose()
+
+
+def _assert_geography_roundtrip(database_url: str) -> None:
+    """A geography point stores and answers a ST_DWithin query (scratch DB)."""
+    engine = create_db_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO stores (id, location) VALUES "
+                    "('00000000-0000-0000-0000-0000000000b4', "
+                    "ST_SetSRID(ST_Point(1, 2), 4326)::geography), "
+                    "('00000000-0000-0000-0000-0000000000b5', "
+                    "ST_SetSRID(ST_Point(3, 3), 4326)::geography)"
+                )
+            )
+        with engine.connect() as connection:
+            srid = connection.execute(
+                text("SELECT ST_SRID(location) FROM stores LIMIT 1")
+            ).scalar()
+            near = connection.execute(
+                text(
+                    "SELECT count(*) FROM stores WHERE ST_DWithin("
+                    "location, ST_GeographyFromText('SRID=4326;POINT(1 2)'), 100)"
+                )
+            ).scalar_one()
+    finally:
+        engine.dispose()
+    assert srid == 4326
+    assert near == 1
+
+
+def _assert_orm_schema_matches(database_url: str) -> None:
+    """ORM metadata for the domain tables is a subset of the live schema."""
+    engine = create_db_engine(database_url)
+    try:
+        inspector = inspect(engine)
+        assert _DOMAIN_TABLES <= set(inspector.get_table_names())
+        for name in _DOMAIN_TABLES:
+            model = Base.metadata.tables[name]
+            live_columns = {column["name"] for column in inspector.get_columns(name)}
+            assert set(model.columns.keys()) <= live_columns, name
+            live_pk = set(inspector.get_pk_constraint(name)["constrained_columns"])
+            assert set(model.primary_key.columns.keys()) <= live_pk, name
+    finally:
+        engine.dispose()
+
+
 def _isolated_roundtrip(database_url: str, monkeypatch: pytest.MonkeyPatch) -> str:
     """Run the released chain in phases: 001 -> head -> 001 -> head.
 
@@ -337,22 +593,25 @@ def _isolated_roundtrip(database_url: str, monkeypatch: pytest.MonkeyPatch) -> s
     the 001 downgrade must remove the domain tables and restore the probe shape
     (schema only -- rows are not recovered); the final head must be the released
     state again. The configured database is used only as the loopback server
-    anchor; the anchor connection and the scratch connection are each verified
-    to have landed on the intended database. A live pre-flight verifies the
-    server identity, the loopback peer, and the CREATE/DROP privilege of the
-    connecting role; the scratch database has PostGIS enabled as a DDL
-    prerequisite, is dropped and verified gone afterwards -- including on
-    failure. If the target cannot be identified with certainty, nothing is
-    created, migrated, or dropped.
+    anchor; the anchor and scratch connections are each verified to have landed
+    on the intended database. A live pre-flight verifies the server identity,
+    the loopback-or-metadata-confirmed peer, and the CREATE/DROP privilege of
+    the connecting role (container identified from Docker metadata); the scratch
+    database has PostGIS enabled as a DDL prerequisite, schema state is asserted
+    at every phase, and constraint/geography/index/metadata checks run against
+    the final head state. The scratch is dropped and verified gone afterwards --
+    including on failure. If the target cannot be identified with certainty,
+    nothing is created, migrated, or dropped.
     """
     server_url, scratch = plan_isolated_target(database_url, enabled=True)
+    container_context = _docker_container_context()
     maintenance_engine = create_db_engine(server_url.set(database=_MAINTENANCE_DB))
     created = False
     try:
         _assert_connection_database(server_url, server_url.database)
         with maintenance_engine.connect() as connection:
             connection = connection.execution_options(isolation_level="AUTOCOMMIT")
-            _check_live_server(connection)
+            _check_live_server(connection, container_context=container_context)
             connection.execute(text(f'CREATE DATABASE "{scratch}"'))
             created = True
         scratch_engine = create_db_engine(server_url.set(database=scratch))
@@ -382,7 +641,10 @@ def _isolated_roundtrip(database_url: str, monkeypatch: pytest.MonkeyPatch) -> s
         assert _isolated_schema_state(target_url) == (True, frozenset(), "001")
         command.upgrade(config, "head")
         assert _isolated_schema_state(target_url) == (False, _DOMAIN_TABLES, "002")
+        _assert_constraints_enforced(target_url)
+        _assert_geography_roundtrip(target_url)
         _assert_single_location_gist_index(target_url)
+        _assert_orm_schema_matches(target_url)
     finally:
         if created:
             _drop_scratch(maintenance_engine, scratch)
@@ -770,10 +1032,12 @@ class _FakeConnection:
         server_version: str = "17.12",
         peer: str | None = "127.0.0.1",
         can_create: bool = True,
+        user: object = "4ddalla",
     ) -> None:
         self._server_version = server_version
         self._peer = peer
         self._can_create = can_create
+        self._user = user
 
     def execute(self, statement: object) -> _FakeResult:
         text_ = str(statement)
@@ -783,6 +1047,8 @@ class _FakeConnection:
             return _FakeResult(self._peer)
         if "rolcreatedb" in text_:
             return _FakeResult(self._can_create)
+        if "current_user" in text_:
+            return _FakeResult(self._user)
         raise AssertionError(f"unexpected statement: {text_}")
 
 
@@ -797,6 +1063,150 @@ def test_check_live_server_refuses_non_loopback_peer(peer: str) -> None:
     with pytest.raises(RuntimeError, match="loopback") as excinfo:
         _check_live_server(_FakeConnection(peer=peer))
     assert peer not in str(excinfo.value)
+
+
+def test_check_live_server_allows_context_confirmed_gateway() -> None:
+    """A gateway confirmed from Docker metadata is positive identification."""
+    _check_live_server(
+        _FakeConnection(peer="172.18.0.1"),
+        container_context={"gateways": {"172.18.0.1"}},
+    )
+
+
+def test_check_live_server_refuses_unconfirmed_bridge_peer() -> None:
+    """A bridge peer not confirmed by metadata is not attributed to the project."""
+    with pytest.raises(RuntimeError, match="loopback") as excinfo:
+        _check_live_server(
+            _FakeConnection(peer="172.18.0.5"),
+            container_context={"gateways": {"172.18.0.1"}},
+        )
+    assert "172.18.0.5" not in str(excinfo.value)
+
+
+def test_check_live_server_without_context_stays_strict() -> None:
+    """The allowance is context-scoped: no metadata -> loopback/NULL only."""
+    with pytest.raises(RuntimeError, match="loopback"):
+        _check_live_server(_FakeConnection(peer="172.18.0.1"))
+
+
+def test_context_gateways_malformed_context_is_empty() -> None:
+    assert _context_gateways(None) == frozenset()
+    assert _context_gateways({"gateways": "172.18.0.1"}) == frozenset()
+    assert _context_gateways({"gateways": {"172.18.0.1"}}) == frozenset({"172.18.0.1"})
+
+
+def _container_payload(**overrides: object) -> dict[str, object]:
+    """Synthetic `docker inspect` payload (test fixture, not policy)."""
+    payload: dict[str, object] = {
+        "Name": "/4ddalla-db",
+        "Id": "0123456789abcdef0123456789abcdef01234567",
+        "State": {"Running": True},
+        "Config": {
+            "Image": "postgis/postgis:17-3.7",
+            "Labels": {
+                "com.docker.compose.project": "docker",
+                "com.docker.compose.service": "db",
+            },
+        },
+        "NetworkSettings": {
+            "Ports": {"5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": "5432"}]},
+            "Networks": {"docker": {"Gateway": "172.18.0.1"}},
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_docker_context_identifies_expected_container() -> None:
+    """Synthetic payload -> expected identification (no patching needed)."""
+    context = _container_from_payload(_container_payload(), "4ddalla-db")
+    assert context["container"] == "4ddalla-db"
+    assert str(context["id"])
+    assert context["project"] == "docker"
+    assert context["service"] == "db"
+    assert context["published"] == ("5432/tcp", "127.0.0.1", "5432")
+    assert context["gateways"] == frozenset({"172.18.0.1"})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not-a-dict",
+        {"Id": "x", "State": {"Running": True}, "Config": {}, "NetworkSettings": {}},
+        _container_payload(Name="/other"),
+        _container_payload(State={"Running": False}),
+        _container_payload(
+            Config={
+                "Image": "nginx",
+                "Labels": {
+                    "com.docker.compose.project": "docker",
+                    "com.docker.compose.service": "db",
+                },
+            }
+        ),
+        _container_payload(Config={"Image": "postgis/postgis:17-3.7"}),
+        _container_payload(
+            Config={
+                "Image": "postgis/postgis:17-3.7",
+                "Labels": {
+                    "com.docker.compose.project": "other",
+                    "com.docker.compose.service": "db",
+                },
+            }
+        ),
+        _container_payload(
+            Config={
+                "Image": "postgis/postgis:17-3.7",
+                "Labels": {
+                    "com.docker.compose.project": "docker",
+                    "com.docker.compose.service": "other",
+                },
+            }
+        ),
+        _container_payload(
+            NetworkSettings={
+                "Ports": {"5432/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5432"}]}
+            }
+        ),
+        _container_payload(NetworkSettings={"Ports": {}}),
+        _container_payload(Id=""),
+    ],
+)
+def test_docker_context_refuses_uncertain_metadata(payload: object) -> None:
+    with pytest.raises((RuntimeError, TypeError)):
+        _container_from_payload(payload, "4ddalla-db")
+
+
+def test_docker_context_without_gateway_still_identifies() -> None:
+    """No gateway visible -> context valid, bridge allowance empty (strict)."""
+    context = _container_from_payload(
+        _container_payload(
+            NetworkSettings={
+                "Ports": {"5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": "5432"}]},
+                "Networks": {},
+            }
+        ),
+        "4ddalla-db",
+    )
+    assert context["gateways"] == frozenset()
+
+
+@pytest.mark.parametrize(
+    "side_effect",
+    [
+        OSError("docker CLI missing"),
+        subprocess.TimeoutExpired("docker", 30),
+    ],
+)
+def test_docker_context_refuses_unusable_inspect(
+    monkeypatch: pytest.MonkeyPatch, side_effect: BaseException
+) -> None:
+    """A failed/timed-out inspect aborts identification; nothing is widened."""
+    monkeypatch.setattr(
+        "subprocess.run", lambda *a, **k: (_ for _ in ()).throw(side_effect)
+    )
+    with pytest.raises(RuntimeError):
+        _docker_container_context()
 
 
 def test_check_live_server_refuses_missing_identity_or_privilege() -> None:
