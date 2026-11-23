@@ -20,8 +20,8 @@ Three tiers, kept deliberately separable so the default run stays DB-free:
   database of the local development loopback endpoint, dev DB ``4ddalla``
   included); every destructive statement (create/upgrade/downgrade/drop) targets
   only the runtime UUID scratch, which is re-verified from the URL in force
-  immediately before execution. The server identity (loopback peer, PostgreSQL
-  version) and CREATE/DROP privilege are pre-checked, the target is cross-checked
+  immediately before execution. The server identity (PostgreSQL version,
+  loopback-or-local-socket peer), CREATE/DROP privilege are pre-checked, the target is cross-checked
   so identification uncertainty starts nothing, an unusable configuration in
   verification mode FAILS instead of silently skipping, and cleanup runs even on
   failure. Because the chain's DDL uses a ``geography`` column, the scratch
@@ -188,20 +188,32 @@ def _check_live_server(connection) -> None:
     results are inspected, never echoed.
 
     The peer must be a loopback address (``inet_client_addr()`` NULL means a
-    local Unix-socket connection and is accepted). A peer on a Docker bridge
-    network (e.g. ``172.17.0.x``) is refused: from the server side that address
-    cannot be attributed to the expected local project, and the round-trip
-    client is expected to run on the host against the loopback endpoint (the
-    target plan already requires a loopback URL). Such a peer indicates a
-    topology the guard cannot positively identify, so it stops the round-trip
-    instead of being guessed at.
+    local Unix-socket connection and is accepted). Measured fact (2026-11-23,
+    live, psycopg 3 + SQLAlchemy 2.0): the driver returns the inet value as an
+    ``ipaddress`` object (IPv4Address), not a string, and a host client reaching
+    this project's container through a Docker *published* port is recorded
+    server-side as the Docker bridge gateway (observed ``172.18.0.1``), not the
+    client's ``127.0.0.1``. An address by itself therefore cannot be attributed
+    to a project from the database alone: loopback/NULL peers are the
+    identifiable local path and are accepted; any other peer (bridge gateway,
+    LAN, VPN, remote) does not positively identify the expected local project
+    and stops the round-trip until the environment is confirmed. This is a
+    plain, non-allowlist-loosening classification, not a removal of the guard;
+    the target plan independently requires a parsed loopback URL.
     """
     version = connection.execute(text("SHOW server_version")).scalar()
     if not isinstance(version, str) or not version.strip():
         raise RuntimeError("could not verify the PostgreSQL server identity")
     peer = connection.execute(text("SELECT inet_client_addr()")).scalar()
-    if peer is not None and peer not in _ALLOWED_HOSTS:
-        raise RuntimeError("connection peer is not the expected local loopback address")
+    if peer is not None:
+        # psycopg3/SQLAlchemy may surface inet as an ipaddress object; compare
+        # the normalized textual address against the same exact allowlist.
+        peer_text = peer if isinstance(peer, str) else str(peer)
+        if peer_text not in _ALLOWED_HOSTS:
+            raise RuntimeError(
+                "connection peer is not the expected local loopback address; "
+                "an unidentifiable network path stops the round-trip"
+            )
     can_create = connection.execute(
         text("SELECT rolcreatedb FROM pg_roles WHERE rolname = current_user")
     ).scalar()
@@ -279,6 +291,25 @@ def _enable_postgis(engine) -> None:
         )
 
 
+def _assert_connection_database(database_url: object, expected_database: str) -> None:
+    """Read the database the live connection actually landed on.
+
+    The configured target and the server-observed ``current_database()`` must
+    agree: this is what ties a run to the intended database rather than a
+    same-server default. Read-only; no URL material appears in failures.
+    """
+    engine = create_db_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            current = connection.execute(text("SELECT current_database()")).scalar()
+    finally:
+        engine.dispose()
+    assert current == expected_database, (
+        "the live connection did not land on the intended database; "
+        "nothing further is attempted"
+    )
+
+
 def _assert_single_location_gist_index(database_url: str) -> None:
     """The domain schema must carry exactly one GiST index on stores.location."""
     engine = create_db_engine(database_url)
@@ -306,16 +337,19 @@ def _isolated_roundtrip(database_url: str, monkeypatch: pytest.MonkeyPatch) -> s
     the 001 downgrade must remove the domain tables and restore the probe shape
     (schema only -- rows are not recovered); the final head must be the released
     state again. The configured database is used only as the loopback server
-    anchor; a live pre-flight verifies the server identity, the loopback peer,
-    and the CREATE/DROP privilege of the connecting role; the scratch database
-    has PostGIS enabled as a DDL prerequisite, is dropped and verified gone
-    afterwards -- including on failure. If the target cannot be identified with
-    certainty, nothing is created, migrated, or dropped.
+    anchor; the anchor connection and the scratch connection are each verified
+    to have landed on the intended database. A live pre-flight verifies the
+    server identity, the loopback peer, and the CREATE/DROP privilege of the
+    connecting role; the scratch database has PostGIS enabled as a DDL
+    prerequisite, is dropped and verified gone afterwards -- including on
+    failure. If the target cannot be identified with certainty, nothing is
+    created, migrated, or dropped.
     """
     server_url, scratch = plan_isolated_target(database_url, enabled=True)
     maintenance_engine = create_db_engine(server_url.set(database=_MAINTENANCE_DB))
     created = False
     try:
+        _assert_connection_database(server_url, server_url.database)
         with maintenance_engine.connect() as connection:
             connection = connection.execution_options(isolation_level="AUTOCOMMIT")
             _check_live_server(connection)
@@ -327,9 +361,14 @@ def _isolated_roundtrip(database_url: str, monkeypatch: pytest.MonkeyPatch) -> s
         finally:
             scratch_engine.dispose()
         target_url = server_url.set(database=scratch)
-        monkeypatch.setenv("DATABASE_URL", str(target_url))
+        _assert_connection_database(target_url, scratch)
+        monkeypatch.setenv(
+            "DATABASE_URL", target_url.render_as_string(hide_password=False)
+        )
         # the URL actually in force must be the scratch database -- the
         # configured general database is only used as the server anchor
+        # credentials are passed via the internal environment variable only;
+        # they are never printed, logged, or written anywhere by this test
         assert get_database_url().endswith(f"/{scratch}")
         config = Config(str(PROJECT_ROOT / "alembic.ini"))
         # phased verification against the released chain: 001 creates the
@@ -430,6 +469,24 @@ def test_database_url_is_stripped() -> None:
         get_database_url({"DATABASE_URL": f"  {_UNREACHABLE_URL}  "})
         == _UNREACHABLE_URL
     )
+
+
+def test_url_rendering_default_masks_password() -> None:
+    """``str(URL)`` masks the password; the explicit full form is opt-in.
+
+    The isolated round-trip hands the URL to the environment for subprocess
+    style use, so the full form is used internally there (never logged); the
+    default rendering must stay masked. Values are synthetic, never real.
+    """
+    from sqlalchemy.engine import URL
+
+    synthetic = "synthetic-pw"
+    url = URL.create(
+        "postgresql+psycopg", "synthetic-user", synthetic, "127.0.0.1", 5432, "4ddalla"
+    )
+    assert synthetic not in str(url)
+    assert synthetic not in str(url.set(database="p1db02_iso_x"))
+    assert synthetic in url.render_as_string(hide_password=False)
 
 
 def test_get_engine_without_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
