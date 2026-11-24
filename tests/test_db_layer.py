@@ -535,31 +535,37 @@ def _assert_constraints_enforced(database_url: str) -> None:
                 "source_links FK (dangling source)",
                 # one valid target so only the FK can fail; source deliberately
                 # nonexistent
-                "INSERT INTO source_links (id, source_id, brand_id, identity_status) "
-                "VALUES ('00000000-0000-0000-0000-0000000000c1', "
-                "'00000000-0000-0000-0000-0000000000ff', "
-                "'00000000-0000-0000-0000-0000000000b0', 'VERIFIED')",
+                (
+                    "INSERT INTO source_links (id, source_id, brand_id, identity_status) "
+                    "VALUES ('00000000-0000-0000-0000-0000000000c1', "
+                    "'00000000-0000-0000-0000-0000000000ff', "
+                    "'00000000-0000-0000-0000-0000000000b0', 'VERIFIED')"
+                ),
                 "23503",
                 "source_links_source_id_fkey",
             ),
             (
                 "source_links CHECK (brand xor store target)",
                 # both targets valid: only the exclusivity CHECK can fail
-                "INSERT INTO source_links (id, source_id, brand_id, store_id, identity_status) "
-                "VALUES ('00000000-0000-0000-0000-0000000000c2', "
-                "'00000000-0000-0000-0000-0000000000b2', "
-                "'00000000-0000-0000-0000-0000000000b0', "
-                "'00000000-0000-0000-0000-0000000000b1', 'VERIFIED')",
+                (
+                    "INSERT INTO source_links (id, source_id, brand_id, store_id, identity_status) "
+                    "VALUES ('00000000-0000-0000-0000-0000000000c2', "
+                    "'00000000-0000-0000-0000-0000000000b2', "
+                    "'00000000-0000-0000-0000-0000000000b0', "
+                    "'00000000-0000-0000-0000-0000000000b1', 'VERIFIED')"
+                ),
                 "23514",
                 "ck_source_links_exclusive_target",
             ),
             (
                 "source_links CHECK (identity_status value)",
                 # valid source + one valid target; invalid enum value only
-                "INSERT INTO source_links (id, source_id, brand_id, identity_status) "
-                "VALUES ('00000000-0000-0000-0000-0000000000c3', "
-                "'00000000-0000-0000-0000-0000000000b2', "
-                "'00000000-0000-0000-0000-0000000000b0', 'NOT_A_STATUS')",
+                (
+                    "INSERT INTO source_links (id, source_id, brand_id, identity_status) "
+                    "VALUES ('00000000-0000-0000-0000-0000000000c3', "
+                    "'00000000-0000-0000-0000-0000000000b2', "
+                    "'00000000-0000-0000-0000-0000000000b0', 'NOT_A_STATUS')"
+                ),
                 "23514",
                 "ck_source_links_identity_status",
             ),
