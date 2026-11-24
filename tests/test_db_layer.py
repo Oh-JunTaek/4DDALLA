@@ -482,11 +482,35 @@ def _assert_single_location_gist_index(database_url: str) -> None:
     )
 
 
+def _violation_facts(error: object) -> tuple[str | None, str | None]:
+    """Extract (SQLSTATE, constraint_name) from a DBAPI integrity error.
+
+    Tolerates driver attribute differences (``pgcode``/``sqlstate``/``code``);
+    ``None`` fields are absent, never guessed. Read-only introspection of the
+    exception; no connection material.
+    """
+    pgcode = None
+    constraint = None
+    for attr in ("pgcode", "sqlstate", "code"):
+        value = getattr(error, attr, None)
+        if isinstance(value, str) and len(value) == 5 and value.isdigit():
+            pgcode = value
+            break
+    raw_constraint = getattr(error, "constraint_name", None)
+    if isinstance(raw_constraint, str) and raw_constraint:
+        constraint = raw_constraint
+    return pgcode, constraint
+
+
 def _assert_constraints_enforced(database_url: str) -> None:
     """FK/CHECK violations must fail on the live schema (scratch DB only)."""
     engine = create_db_engine(database_url)
     try:
         with engine.begin() as connection:
+            # complete, valid rows first so only the deliberately broken
+            # statement below can fail; explicit UUIDs because the DB columns
+            # have no server defaults (the ORM's Python-side defaults are not
+            # applied by raw SQL)
             connection.execute(
                 text(
                     "INSERT INTO brands (id, canonical_name) VALUES "
@@ -495,46 +519,60 @@ def _assert_constraints_enforced(database_url: str) -> None:
             )
             connection.execute(
                 text(
-                    "INSERT INTO stores (id) VALUES ('00000000-0000-0000-0000-0000000000b1')"
+                    "INSERT INTO stores (id) VALUES "
+                    "('00000000-0000-0000-0000-0000000000b1')"
                 )
             )
             connection.execute(
                 text(
-                    "INSERT INTO sources (channel_type, canonical_url, collection_permission) "
-                    "VALUES ('probe', 'https://example.invalid/probe', 'ALLOWED')"
+                    "INSERT INTO sources (id, channel_type, canonical_url, collection_permission) "
+                    "VALUES ('00000000-0000-0000-0000-0000000000b2', "
+                    "'probe', 'https://example.invalid/probe', 'ALLOWED')"
                 )
             )
         violations = (
             (
                 "source_links FK (dangling source)",
-                (
-                    "INSERT INTO source_links (id, source_id, identity_status) VALUES "
-                    "('00000000-0000-0000-0000-0000000000c1', "
-                    "'00000000-0000-0000-0000-0000000000ff', 'VERIFIED')"
-                ),
+                # one valid target so only the FK can fail; source deliberately
+                # nonexistent
+                "INSERT INTO source_links (id, source_id, brand_id, identity_status) "
+                "VALUES ('00000000-0000-0000-0000-0000000000c1', "
+                "'00000000-0000-0000-0000-0000000000ff', "
+                "'00000000-0000-0000-0000-0000000000b0', 'VERIFIED')",
+                "23503",
+                "source_links_source_id_fkey",
             ),
             (
                 "source_links CHECK (brand xor store target)",
-                (
-                    "INSERT INTO source_links (id, source_id, brand_id, store_id, identity_status) VALUES "
-                    "('00000000-0000-0000-0000-0000000000c2', "
-                    "'00000000-0000-0000-0000-0000000000b2', "
-                    "'00000000-0000-0000-0000-0000000000b0', "
-                    "'00000000-0000-0000-0000-0000000000b1', 'VERIFIED')"
-                ),
+                # both targets valid: only the exclusivity CHECK can fail
+                "INSERT INTO source_links (id, source_id, brand_id, store_id, identity_status) "
+                "VALUES ('00000000-0000-0000-0000-0000000000c2', "
+                "'00000000-0000-0000-0000-0000000000b2', "
+                "'00000000-0000-0000-0000-0000000000b0', "
+                "'00000000-0000-0000-0000-0000000000b1', 'VERIFIED')",
+                "23514",
+                "ck_source_links_exclusive_target",
             ),
             (
                 "source_links CHECK (identity_status value)",
-                (
-                    "INSERT INTO source_links (id, source_id, identity_status) VALUES "
-                    "('00000000-0000-0000-0000-0000000000c3', "
-                    "'00000000-0000-0000-0000-0000000000b3', 'NOT_A_STATUS')"
-                ),
+                # valid source + one valid target; invalid enum value only
+                "INSERT INTO source_links (id, source_id, brand_id, identity_status) "
+                "VALUES ('00000000-0000-0000-0000-0000000000c3', "
+                "'00000000-0000-0000-0000-0000000000b2', "
+                "'00000000-0000-0000-0000-0000000000b0', 'NOT_A_STATUS')",
+                "23514",
+                "ck_source_links_identity_status",
             ),
         )
-        for _label, statement in violations:
-            with engine.begin() as connection, pytest.raises(IntegrityError):
+        for _label, statement, expected_pgcode, expected_constraint in violations:
+            with engine.begin() as connection, pytest.raises(IntegrityError) as excinfo:
                 connection.execute(text(statement))
+            # exact-violation check: SQLSTATE and, where the driver exposes it,
+            # PostgreSQL's constraint_name
+            pgcode, constraint = _violation_facts(excinfo.value.orig)
+            assert pgcode == expected_pgcode, (_label, pgcode)
+            if constraint is not None:
+                assert constraint == expected_constraint, (_label, constraint)
     finally:
         engine.dispose()
 
@@ -554,8 +592,11 @@ def _assert_geography_roundtrip(database_url: str) -> None:
                 )
             )
         with engine.connect() as connection:
-            srid = connection.execute(
-                text("SELECT ST_SRID(location) FROM stores LIMIT 1")
+            location_type = connection.execute(
+                text(
+                    "SELECT format_type(atttypid, atttypmod) FROM pg_attribute "
+                    "WHERE attrelid = 'stores'::regclass AND attname = 'location'"
+                )
             ).scalar()
             near = connection.execute(
                 text(
@@ -565,7 +606,7 @@ def _assert_geography_roundtrip(database_url: str) -> None:
             ).scalar_one()
     finally:
         engine.dispose()
-    assert srid == 4326
+    assert location_type == "geography(Point,4326)"
     assert near == 1
 
 
