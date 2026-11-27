@@ -35,6 +35,17 @@ from app.discovery import (
 _CENTER = Coordinate(latitude=37.497900, longitude=127.098300)
 
 
+def _synthetic_for(provider_id: str, page_size: int) -> SyntheticPlaceProvider:
+    """Synthetic fixture bound to a custom provider id (test helper)."""
+    places = tuple(
+        place.model_copy(update={"provider_id": provider_id})
+        for place in SYNTHETIC_PLACES
+    )
+    return SyntheticPlaceProvider(
+        provider_id=provider_id, places=places, page_size=page_size
+    )
+
+
 def make_input(
     radius: int = 800,
     categories: tuple[str, ...] = (),
@@ -55,8 +66,10 @@ class _RecordingProvider:
     contract_version = "1.0.0"
     data_use = DataUseRights.STORE_ALLOWED
 
-    def __init__(self, inner: SyntheticPlaceProvider) -> None:
-        self.provider_id = inner.provider_id
+    def __init__(
+        self, inner: SyntheticPlaceProvider, *, provider_id: str | None = None
+    ) -> None:
+        self.provider_id = provider_id if provider_id is not None else inner.provider_id
         self._inner = inner
         self.requests: list[ProviderSearchRequest] = []
 
@@ -118,6 +131,122 @@ class _NonPageProvider:
 
     def search(self, request: ProviderSearchRequest) -> object:
         return object()
+
+
+class _RepeatTokenProvider:
+    """Always emits the same next-page token (self-repeat)."""
+
+    contract_version = "1.0.0"
+    data_use = DataUseRights.STORE_ALLOWED
+    provider_id = "repeat-token"
+
+    def __init__(self) -> None:
+        self.requests: list[ProviderSearchRequest] = []
+
+    def search(self, request: ProviderSearchRequest) -> ProviderSearchPage:
+        self.requests.append(request)
+        page = 0 if request.page_token is None else 1
+        return ProviderSearchPage(
+            provider_id=self.provider_id,
+            contract_version=self.contract_version,
+            places=(
+                ProviderPlace(
+                    provider_id=self.provider_id,
+                    external_id=f"syn-repeat-{page}",
+                    display_name=f"Repeat page {page}",
+                    latitude=_CENTER.latitude + 40 / 111195,
+                    longitude=_CENTER.longitude,
+                ),
+            ),
+            next_page_token="loop",
+        )
+
+
+class _CycleTokenProvider:
+    """Walks tokens A -> B -> A (multi-token cycle)."""
+
+    contract_version = "1.0.0"
+    data_use = DataUseRights.STORE_ALLOWED
+    provider_id = "cycle-token"
+
+    def __init__(self) -> None:
+        self.requests: list[ProviderSearchRequest] = []
+
+    def search(self, request: ProviderSearchRequest) -> ProviderSearchPage:
+        self.requests.append(request)
+        page = len(self.requests)
+        return ProviderSearchPage(
+            provider_id=self.provider_id,
+            contract_version=self.contract_version,
+            places=(
+                ProviderPlace(
+                    provider_id=self.provider_id,
+                    external_id=f"syn-cycle-{page}",
+                    display_name=f"Cycle page {page}",
+                    latitude=_CENTER.latitude + 40 / 111195,
+                    longitude=_CENTER.longitude,
+                ),
+            ),
+            next_page_token=("tokA", "tokB")[page % 2 - 1],
+        )
+
+
+class _FirstPageThenFailProvider:
+    """First page succeeds with a candidate; the second call fails."""
+
+    contract_version = "1.0.0"
+    data_use = DataUseRights.STORE_ALLOWED
+    provider_id = "flaky"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def search(self, request: ProviderSearchRequest) -> ProviderSearchPage:
+        self.calls += 1
+        if self.calls == 1:
+            return ProviderSearchPage(
+                provider_id=self.provider_id,
+                contract_version=self.contract_version,
+                places=(
+                    ProviderPlace(
+                        provider_id=self.provider_id,
+                        external_id="syn-page-1",
+                        display_name="First page place",
+                        latitude=_CENTER.latitude + 40 / 111195,
+                        longitude=_CENTER.longitude,
+                    ),
+                ),
+                next_page_token="page-2",
+            )
+        raise ProviderExecutionError(
+            "private-detail-xyz",
+            provider_id=self.provider_id,
+            error_code="transport_down",
+            retryable=True,
+        )
+
+
+class _PlaceIdMismatchProvider:
+    """Returns one place carrying a foreign provider_id."""
+
+    contract_version = "1.0.0"
+    data_use = DataUseRights.STORE_ALLOWED
+    provider_id = "place-id-mismatch"
+
+    def search(self, request: ProviderSearchRequest) -> ProviderSearchPage:
+        return ProviderSearchPage(
+            provider_id=self.provider_id,
+            contract_version=self.contract_version,
+            places=(
+                ProviderPlace(
+                    provider_id="some-other-provider",
+                    external_id="foreign-place",
+                    display_name="Foreign place",
+                    latitude=_CENTER.latitude + 40 / 111195,
+                    longitude=_CENTER.longitude,
+                ),
+            ),
+        )
 
 
 def repeated_external_id_places() -> tuple[ProviderPlace, ...]:
@@ -271,6 +400,145 @@ def test_provider_without_more_pages_returns_single_page() -> None:
     assert len(provider.requests) == 1
     assert provider.requests[0].page_token is None
     assert len(result.candidates) == 2
+
+
+# --- pagination safety: visited tokens and explicit budget ---
+
+
+def test_page_budget_limits_calls_and_keeps_earlier_candidates() -> None:
+    provider = _RecordingProvider(SyntheticPlaceProvider(page_size=1))
+    discovery = StoreDiscovery({"synthetic": provider}, page_budget=2)
+    result = discovery.execute(make_input(radius=1000))
+    assert len(provider.requests) == 2
+    assert [request.page_token for request in provider.requests] == [None, "1"]
+    assert [ref.external_id for c in result.candidates for ref in c.provider_refs] == [
+        "syn-cafe-near",
+        "syn-brunch-mid",
+    ]
+    assert result.status is ExecutionStatus.FAILED
+    assert [issue.error_code for issue in result.issues] == [
+        "pagination.budget_exhausted"
+    ]
+    assert result.issues[0].retryable is True
+
+
+def test_page_budget_not_hit_when_search_completes_within_budget() -> None:
+    provider = _RecordingProvider(SyntheticPlaceProvider(page_size=10))
+    result = StoreDiscovery({"synthetic": provider}, page_budget=1).execute(
+        make_input(radius=1000)
+    )
+    assert len(provider.requests) == 1
+    assert result.status is ExecutionStatus.SUCCESS
+    assert result.issues == []
+
+
+def test_page_budget_must_be_positive_int_or_none() -> None:
+    with pytest.raises(ValueError, match="page_budget"):
+        StoreDiscovery({}, page_budget=0)
+    with pytest.raises(ValueError, match="page_budget"):
+        StoreDiscovery({}, page_budget=True)  # type: ignore[arg-type]
+
+
+def test_repeated_page_token_stops_provider_and_keeps_candidates() -> None:
+    provider = _RepeatTokenProvider()
+    result = StoreDiscovery({"repeat-token": provider}).execute(
+        make_input(providers=("repeat-token",))
+    )
+    assert [request.page_token for request in provider.requests] == [None, "loop"]
+    assert [ref.external_id for c in result.candidates for ref in c.provider_refs] == [
+        "syn-repeat-0",
+        "syn-repeat-1",
+    ]
+    assert result.status is ExecutionStatus.FAILED
+    assert [issue.error_code for issue in result.issues] == ["pagination.token_repeat"]
+
+
+def test_multi_token_cycle_is_detected() -> None:
+    provider = _CycleTokenProvider()
+    result = StoreDiscovery({"cycle-token": provider}).execute(
+        make_input(providers=("cycle-token",))
+    )
+    assert [request.page_token for request in provider.requests] == [
+        None,
+        "tokA",
+        "tokB",
+    ]
+    assert [issue.error_code for issue in result.issues] == ["pagination.token_repeat"]
+
+
+def test_partial_completion_with_budget_stop_keeps_completed_scope() -> None:
+    providers = {
+        "wide": _RecordingProvider(_synthetic_for("wide", 10)),
+        "narrow": _RecordingProvider(_synthetic_for("narrow", 1)),
+    }
+    result = StoreDiscovery(providers, page_budget=1).execute(
+        make_input(providers=("wide", "narrow"))
+    )
+    assert result.status is ExecutionStatus.PARTIAL
+    assert [issue.error_code for issue in result.issues] == [
+        "pagination.budget_exhausted"
+    ]
+
+
+# --- individual response validation and status matrix ---
+
+
+def test_place_provider_id_mismatch_rejects_page_without_candidates() -> None:
+    result = StoreDiscovery({"place-id-mismatch": _PlaceIdMismatchProvider()}).execute(
+        make_input(providers=("place-id-mismatch",))
+    )
+    assert result.status is ExecutionStatus.FAILED
+    assert result.candidates == []
+    assert [issue.error_code for issue in result.issues] == [
+        "place_provider_id_mismatch"
+    ]
+
+
+def test_failure_after_first_page_keeps_earlier_candidates() -> None:
+    provider = _FirstPageThenFailProvider()
+    result = StoreDiscovery({"flaky": provider}).execute(
+        make_input(providers=("flaky",))
+    )
+    assert provider.calls == 2
+    assert result.status is ExecutionStatus.FAILED
+    assert [ref.external_id for c in result.candidates for ref in c.provider_refs] == [
+        "syn-page-1"
+    ]
+    assert [issue.error_code for issue in result.issues] == ["transport_down"]
+    assert result.issues[0].retryable is True
+    assert "private-detail-xyz" not in result.model_dump_json()
+
+
+def test_all_targets_rights_blocked_is_restricted() -> None:
+    providers = {
+        "blocked-a": SyntheticPlaceProvider(
+            provider_id="blocked-a",
+            data_use=DataUseRights.UNKNOWN,
+            places=(),
+        ),
+        "blocked-b": SyntheticPlaceProvider(
+            provider_id="blocked-b",
+            data_use=DataUseRights.UNKNOWN,
+            places=(),
+        ),
+    }
+    result = StoreDiscovery(providers).execute(
+        make_input(providers=("blocked-a", "blocked-b"))
+    )
+    assert result.status is ExecutionStatus.RESTRICTED
+    assert result.candidates == []
+    assert [issue.error_code for issue in result.issues] == [
+        "data_use.unconfirmed",
+        "data_use.unconfirmed",
+    ]
+
+
+def test_requested_categories_are_passed_through_unchanged() -> None:
+    provider = _RecordingProvider(SyntheticPlaceProvider(page_size=10))
+    StoreDiscovery({"synthetic": provider}).execute(
+        make_input(radius=1000, categories=("카페",))
+    )
+    assert all(request.categories == ("카페",) for request in provider.requests)
 
 
 # --- duplicates, errors, rights ---
@@ -452,7 +720,7 @@ def test_declared_display_only_rights_candidate_is_returned_with_declaration() -
     assert all(c.data_use is DataUseRights.DISPLAY_ONLY for c in result.candidates)
 
 
-def test_unknown_rights_plus_healthy_provider_yields_success_with_issue() -> None:
+def test_normal_provider_plus_rights_blocked_provider_is_partial() -> None:
     providers = {
         "blocked": SyntheticPlaceProvider(
             provider_id="blocked",
@@ -464,7 +732,7 @@ def test_unknown_rights_plus_healthy_provider_yields_success_with_issue() -> Non
     result = StoreDiscovery(providers).execute(
         make_input(providers=("blocked", "synthetic"))
     )
-    assert result.status is ExecutionStatus.SUCCESS
+    assert result.status is ExecutionStatus.PARTIAL
     assert [issue.error_code for issue in result.issues] == ["data_use.unconfirmed"]
     assert len(result.candidates) == 2
 

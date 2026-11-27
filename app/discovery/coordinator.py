@@ -5,9 +5,16 @@ Execution contract (self-contained so DB-free tests pin the behaviour):
 - every allowed provider must be registered, else ``ValueError``;
 - providers whose declared rights are ``DataUseRights.UNKNOWN`` are skipped with
   a structured issue — no candidate is returned, persisted or published;
-- pagination continues while ``next_page_token`` is set; provider failures are
-  captured per provider (``ProviderExecutionError``) as structured issues and do
-  not abort other providers;
+- pagination safety: visited page tokens are tracked per provider; a repeated
+  token (self-repeat or cycle) stops that provider with a structured issue, and
+  a configured per-provider page-call budget (explicit setting; ``None`` = no
+  engine cap, provider's own limits still apply) stops pagination when exceeded;
+- a provider stop after earlier pages keeps the candidates already validated
+  from those pages — only unvalidated data is dropped;
+- each returned page is validated in full (page/contract metadata **and** every
+  place's ``provider_id``) before any candidate from it is committed, so another
+  provider's records mixed into a page are not accepted;
+- pagination requests are bounded by visited-token tracking as well as budget;
 - candidates beyond the requested radius are filtered out (inclusive boundary);
 - repeated exact (provider_id, external_id) pairs collapse into the first
   candidate flagged ``SAME_PROVIDER_REPEAT`` — candidates are never merged, and
@@ -16,8 +23,18 @@ Execution contract (self-contained so DB-free tests pin the behaviour):
   identity key exists (``CROSS_PROVIDER_DUPLICATE_KEY_UNDEFINED``);
 - empty result (providers OK, zero candidates) is valid SUCCESS — distinct from
   FAILED/PARTIAL via status and issues;
-- status precedence: FAILED (all attempted providers failed) > PARTIAL (mixed) >
-  RESTRICTED (nothing succeeded, at least one rights-blocked) > SUCCESS.
+- status: SUCCESS = every requested scope completed normally (0 results
+  included); PARTIAL = at least one scope completed and at least one not
+  completed (error, rights limit, budget, token stop); RESTRICTED = nothing
+  completed and every requested target rights-blocked; FAILED = nothing
+  completed normally and at least one failure/incomplete stop. ``UNCHANGED`` is
+  not used for discovery runs.
+
+Category consistency between requested 업종 and provider-returned 업종 cannot
+be validated generically yet: neither side's taxonomy is fixed (업종 분류
+미확정 — not decided here), so the engine passes the request through and lets
+the provider filter; a provider that echoes records outside the requested
+categories is not detectable without a taxonomy decision.
 
 ``run_id``/``job_id`` default to fresh UUIDs so the engine is usable standalone
 (DB-free tests/demos); orchestration may pass the envelope's identifiers.
@@ -71,9 +88,25 @@ def _sort_key(candidate: StoreCandidate) -> tuple:
 
 
 class StoreDiscovery:
-    """Provider-agnostic discovery engine; built with a provider registry."""
+    """Provider-agnostic discovery engine; built with a provider registry.
 
-    def __init__(self, providers: Mapping[str, PlaceSearchProvider]) -> None:
+    ``page_budget`` (optional) is an explicit per-provider ceiling on page
+    requests per run; ``None`` means the engine applies no cap — no default
+    limit is invented because real provider quotas are undecided (OPEN-001).
+    """
+
+    def __init__(
+        self,
+        providers: Mapping[str, PlaceSearchProvider],
+        *,
+        page_budget: int | None = None,
+    ) -> None:
+        if page_budget is not None and (
+            isinstance(page_budget, bool)
+            or not isinstance(page_budget, int)
+            or page_budget < 1
+        ):
+            raise ValueError("page_budget must be a positive int or None")
         for provider_id, provider in providers.items():
             if provider.provider_id != provider_id:
                 raise ValueError(
@@ -81,6 +114,7 @@ class StoreDiscovery:
                     f"provider_id {provider.provider_id!r}"
                 )
         self._providers = dict(providers)
+        self._page_budget = page_budget
 
     def execute(
         self,
@@ -107,7 +141,7 @@ class StoreDiscovery:
         candidates: list[StoreCandidate] = []
         issues: list[ExecutionIssue] = []
         kept: dict[tuple[str, str], StoreCandidate] = {}
-        succeeded = failed = blocked = 0
+        completed = failed = blocked = incomplete = 0
 
         for provider_id in provider_ids:
             provider = self._providers[provider_id]
@@ -125,8 +159,36 @@ class StoreDiscovery:
                 continue
 
             page_token: str | None = None
+            visited_tokens: set[str | None] = set()
+            requests = 0
+            provider_completed = False
             try:
                 while True:
+                    if page_token is not None and page_token in visited_tokens:
+                        issues.append(
+                            _issue(
+                                "pagination.token_repeat",
+                                run_id=run_id,
+                                job_id=job_id,
+                                provider_id=provider_id,
+                                reason="repeated page token detected (self-repeat or cycle); pagination stopped",
+                            )
+                        )
+                        break
+                    if self._page_budget is not None and requests >= self._page_budget:
+                        issues.append(
+                            _issue(
+                                "pagination.budget_exhausted",
+                                run_id=run_id,
+                                job_id=job_id,
+                                provider_id=provider_id,
+                                reason="page call budget exhausted; pagination stopped",
+                                retryable=True,
+                            )
+                        )
+                        break
+                    visited_tokens.add(page_token)
+                    requests += 1
                     page = provider.search(
                         ProviderSearchRequest(
                             center=center,
@@ -175,19 +237,23 @@ class StoreDiscovery:
                         kept[key] = candidates[-1]
                     page_token = page.next_page_token
                     if not page_token:
+                        provider_completed = True
                         break
             except ProviderExecutionError as exc:
                 failed += 1
                 issues.append(_provider_issue(exc, run_id=run_id, job_id=job_id))
                 continue
-            succeeded += 1
+            if provider_completed:
+                completed += 1
+            else:
+                incomplete += 1
 
-        if failed and succeeded == 0:
+        if completed == 0 and (failed > 0 or incomplete > 0):
             status = ExecutionStatus.FAILED
-        elif failed:
-            status = ExecutionStatus.PARTIAL
-        elif blocked and succeeded == 0:
+        elif completed == 0 and blocked == len(provider_ids):
             status = ExecutionStatus.RESTRICTED
+        elif failed > 0 or incomplete > 0 or blocked > 0:
+            status = ExecutionStatus.PARTIAL
         else:
             status = ExecutionStatus.SUCCESS
 
@@ -221,6 +287,13 @@ def _check_page_contract(provider: PlaceSearchProvider, page: object) -> None:
             provider_id=provider.provider_id,
             error_code="contract_version_mismatch",
         )
+    for place in page.places:
+        if place.provider_id != provider.provider_id:
+            raise ProviderExecutionError(
+                "place provider_id mismatch",
+                provider_id=provider.provider_id,
+                error_code="place_provider_id_mismatch",
+            )
 
 
 def _issue(
