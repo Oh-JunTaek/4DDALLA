@@ -1,9 +1,9 @@
 # 4 DDALLA — Session Handoff
 
-- Status: HANDOFF v20 (v19 누적·P1-DB-02B 라이브 검증·마무리 완료·로컬 커밋 / P1-DB-HARDEN-01 로컬 완료(8edd333·c3fd0e6·1a438e5 등) / P1-DB-HARDEN-02 안정화 항목 로컬 완료(77140e0·4dcf7ae)·기본 검증 통과 / 2026-11-19 Engine 접속 회복→라이브 부분 재검증(§G), 잔여 항목 보류 / P1-DATA-01 물리 모델 설계 초안(9cdd1bd) → **1차 도메인 스키마 구현(2026-11-21, 로컬·미적용, §M**: ORM+002 작성·구현 검사 통과·라이브/적용 미실행) / 2026-11-22 검증 라운드(§N: P0 페이즈 단언·PostGIS 전제·공간 인덱스 정합·가드레 단위 테스트) / 2026-11-23~26 최종 실DB 검증: 조건부 브리지 피어 게이트 승인·구현·단위 검증 통과 → 11-25 라이브 격리 왕복·통합 테스트·사전 게이트·백업·**002 적용·사후 검증 전부 통과(rev 002)** → 11-26 말미 Engine 재단절(플래핑)로 컨테이너·health 재확인 미완(데이터 불변) / 원격 push·main 병합·배포는 사용자 승인 대기)
+- Status: HANDOFF v21 (v20 누적·P1-DB-02B 라이브 검증·마무리 완료·로컬 커밋 / P1-DB-HARDEN-01 로컬 완료(8edd333·c3fd0e6·1a438e5 등) / P1-DB-HARDEN-02 안정화 항목 로컬 완료(77140e0·4dcf7ae)·기본 검증 통과 / 2026-11-19 Engine 접속 회복→라이브 부분 재검증(§G), 잔여 항목 보류 / P1-DATA-01 물리 모델 설계 초안(9cdd1bd) → **1차 도메인 스키마 구현(2026-11-21, 로컬·미적용, §M**: ORM+002 작성·구현 검사 통과·라이브/적용 미실행) / 2026-11-22 검증 라운드(§N: P0 페이즈 단언·PostGIS 전제·공간 인덱스 정합·가드레 단위 테스트) / 2026-11-23~26 최종 실DB 검증: 조건부 브리지 피어 게이트 승인·구현·단위 검증 통과 → 11-25 라이브 격리 왕복·통합 테스트·사전 게이트·백업·**002 적용·사후 검증 전부 통과(rev 002)** → 11-26 말미 Engine 재단절(플래핑)로 컨테이너·health 재확인 미완(데이터 불변) / P2-STORE-01(2026-11-27) StoreDiscovery 계약·공급자 인터페이스·실행 로직·합성 공급자·DB-free 테스트 44건 로컬 구현 — 물리 스키마·실제 공급자 연동 없음(별도 승인 사안) / 원격 push·main 병합·배포는 사용자 승인 대기)
 - 원칙: 짧고 정확한 사실만 기록. 확인되지 않은 정보는 `미확인`으로 표기. API 키·비밀정보·개인정보 기록 금지. 실제 Git 상태와 다르면 실제 상태를 재확인하고 차이를 보고한다.
-- 현재 상태(2026-11-26 기준 이 문서가 아는 사실만): HEAD `2a2b856`(develop) — 미push(로컬 개발 커밋만; 이 세션 fetch·push·원격 쓰기 없음). P1-DATA-01 = 로컬 구현·오프라인 검증 + **2026-11-25 라이브 확정: 격리 왕복·통합 테스트·사전 게이트·백업·002 적용·사후 검증 전부 통과** — 개발 DB rev **002**, 도메인 6테이블·단일 GiST 인덱스·FK/CHECK 개수·ORM 메타데이터 부분집합 확인, 데이터 카운트 무변경(관측 차원: alembic_version=1·spatial_ref_sys=8,500). 11-26 말미 Engine 재단절(플래핑)로 **컨테이너 상태·health 재확인만 미완**(데이터·볼륨 불변; 적용 검증엔 영향 없음 — 적용·검증은 연결 안정 시점에 수행·확인됨).
-- 다음 작업: ① (선택) Docker 재기동 시 컨테이너·health 재확인 — 적용 검증엔 불필요(완료) ② push 여부 결정 — 기본 미실행(로컬 전용 커밋) ③ (사용자 결정) P1-DATA-01 종료 선언·StoreDiscovery 등 다음 서비스 기능 착수 — 티켓 목표(전체 검증·적용) 충족.
+- 현재 상태(2026-11-27 기준 이 문서가 아는 사실만): HEAD `b28e576`(develop) — 로컬 개발 커밋만; 이 세션 fetch·push·원격 쓰기 없음; 로컬 `develop`=로컬 추적 ref `origin/develop`=`b28e576`(원격 네트워크 값은 이 세션 미조회 — `미확인`). P1-DATA-01 = 로컬 구현·오프라인 검증 + **2026-11-25 라이브 확정: 격리 왕복·통합 테스트·사전 게이트·백업·002 적용·사후 검증 전부 통과** — 개발 DB rev **002**, 도메인 6테이블·단일 GiST 인덱스·FK/CHECK 개수·ORM 메타데이터 부분집합 확인, 데이터 카운트 무변경(관측 차원: alembic_version=1·spatial_ref_sys=8,500). 11-26 말미 Engine 재단절(플래핑)로 **컨테이너 상태·health 재확인만 미완**(데이터·볼륨 불변; 적용 검증엔 영향 없음 — 적용·검증은 연결 안정 시점에 수행·확인됨). **2026-11-27 P2-STORE-01 로컬 구현: 계약·공급자 인터페이스·실행 로직·합성 공급자·DB-free 테스트 44건 — 물리 스키마·실제 공급자 연동 없음(별도 승인 사안).**
+- 다음 작업: ① (선택) Docker 재기동 시 컨테이너·health 재확인 — 적용 검증엔 불필요(완료) ② push 여부 결정 — 기본 미실행(로컬 개발 커밋만) ③ (사용자 결정 필요) StoreDiscovery 다음 단계 — 물리 스키마·Alembic 리비전(별도 승인·티켓) 및 실제 장소 공급자 선정(DECISIONS OPEN-001) — 데이터 모델 검토 문서 참조.
 - 보호 대상·금지 명령: `ses1`·`Docs/draft.md` 미추적·미변경. DB 볼륨·기존 리비전·기존 데이터 접촉 없음(적용 시 로컬 백업·읽기 전용 확인 원칙 준수). push·PR·main 병합·deploy 금지. reset/rebase/force push·이력 재작성 금지. 스크래치 전용 DDL 원칙(왕복·개발 DB 업그레이드 포함).
 - 이 문서와 실제 Git 상태가 다르면 실제 상태를 기준으로 갱신·차이 보고한다(11-26 재확인치 기준).
 
@@ -21,10 +21,11 @@
 3. `Docs/ENGINE_SPEC.md` v1.0.0 — 공통 Enum/모듈 계약. §12.1은 P1-CONTRACT-02(2026-11-14) 구현 확정 사항.
 4. `Docs/PRODUCT_SPEC.md` v1.0.0(2026-11-12 보완) — 정책 P-001~P-020.
 5. `Docs/ARCHITECTURE.md` v1.0.0 — 구성/서버·로컬 책임.
-6. `Docs/DATA_MODEL.md` v1.0.0 — 논리 스키마 기준선. 물리 SQL DDL·마이그레이션 미검증.
+6. `Docs/DATA_MODEL.md` v1.0.0 — 논리 스키마 기준선. 물리 스키마는 Alembic 002(1차 도메인 6테이블)가 로컬 개발 DB에 적용·격리 검증됨(2026-11-25, §N.3) — 문서 자체는 계약 기준선.
 7. `Docs/DECISIONS.md` v1.0.0 — ADR-001~015, 미정 OPEN-001~011.
 8. `Docs/BACKLOG.md` — 골격(DRAFT), 세부 다수 `미확정`.
 9. `Docs/LOCAL_DEV.md` — Windows 로컬 개발/검증 가이드(부트스트랩 범위; 2026-11-17 DB 검증 티어·현황 갱신 반영).
+10. `Docs/P2-STORE-01-data-model-review.md` — P2-STORE-01 데이터 모델 검토(문서 전용·DDL/리비전 없음).
 
 ## C. 실제 Git 상태(2026-11-23 재확인)
 
@@ -34,6 +35,7 @@
 - 로컬 삭제 브랜치 tip(e46e01d, 6f506b2, b43cbb9, 563e1e6) 모두 main 조상임을 `merge-base --is-ancestor`로 확인 → 커밋/파일 내용 main에 보존. develop의 main(d205bbd) 대비 진전: 문서·P1-DB 시리즈·핸드오프 커밋(상세 §D·§L).
 - 커밋(최신 `9d065dc`) 기준 작업트리: 추적 파일 변경·삭제 없음(11-22 재확인; 본 티켓 변경 = 로컬 커밋 `b325b30`·`9d065dc`). 커밋 전 재확인 시점에서 로컬 `develop` = 로컬 원격추적 ref = 네트워크 `ls-remote` = `d2ddd24` 3중 일치였고, 11-21 기재 `cabc15a`와 불일치·반영 경로 미확인(사용자 확인 권장, 임의 정리 금지). 현재 로컬 `develop` = `9d065dc` — 원격 `d2ddd24` 기준 **ahead 3**(11-22 보고 시점: `b325b30`·`9d065dc`·`d39aa84`)·미push(승인 필요). 미추적 파일(변경·삭제·추적 금지): `Docs/draft.md`(이전 세션 발견, 보호 대상·미수정). `ses1`(1,434,427B, 2026-11-14 12:47) — 사용자 확인: 세션 대화 백업(민감정보 포함 가능) → 원문 비출력 원칙, 삭제·이동·추적 금지(별도 승인 전).
 - 참고: 최종 main 갱신·브랜치 정리 이후 로컬 상태 기준. 그 사이 외부 변경 여부는 보장 불가 → 다음 세션에서 재확인.
+- 2026-11-27 재확인: 로컬 `develop` = 로컬 추적 ref `origin/develop` = `b28e576`. 네트워크 원격 값은 이 세션 미조회(`미확인`) — 상위 bullet들의 11-22/11-23 네트워크 관측값은 당시 기록이며 현재와 다를 수 있음. 이 세션 fetch·push·원격 쓰기 없음; 원격 대비 로컬 선행 여부는 `git status --short --branch`·`git rev-list --count origin/develop..HEAD`로 재확인(관측치: count 0=추적 ref 기준).
 
 ## D. 완료 작업(커밋/파일로 검증된 범위)
 
@@ -174,6 +176,7 @@
 - 갱신: 2026-11-18 — 핸드오프 v11: 최종 검증 절차 시도 기록 — 비-DB 회귀(Ruff·기본 pytest 108 passed/8 skipped, 실패 0) 통과; 라이브 검증은 Docker Engine 3회 재시도 미도달로 전면 보류·미실행(설치·재설치·컨텍스트 변경 없음, 컨테이너·볼륨·DB 무접촉) — 사용자 기동 후 §J 6절차 재개. 라이브 `ls-remote`: 원격 `develop` = 1a438e5(로컬 HEAD 동일; 직전 보고 284150f에서 전진 — 주체·시점 미확인). `%LOCALAPPDATA%\Temp\opencode` 출처 미확인 진단 스크립트 3건 관찰·미접촉. 비밀정보 비기록 준수 — `.env` 실제 값 미기재.
 - 갱신: 2026-11-18 — 핸드오프 v12: P1-DB-HARDEN-02 안정화 항목 구현·기본 검증·커밋(77140e0·4dcf7ae; 문서 커밋 b1e2db0·2ed9b31·50738e3; Ruff 통과·기본 pytest 114 passed/8 skipped, 실패 0; 옵트인 강제 실행 시 전제 미충족·연결 실패가 skip 아님=failed로 확인). 라이브 항목은 당시 Engine 미도달로 보류·미실행(컨테이너·볼륨·DB 무접촉). 원격 `develop` = 59fe67b 재확인(읽기 전용; 2026-11-18) — 로컬 4커밋 앞섬(77140e0·4dcf7ae·b1e2db0·2ed9b31). 비밀정보 비기록 준수 — `.env` 실제 값 미기재.
 - 갱신: 2026-11-22 — §N 추가: P1-DATA-01 검증 라운드 — P0 격리 페이즈 단언, 신규 스크래치 PostGIS 전제, 공간 인덱스 정합(ORM `spatial_index=False`·002 `ix_stores_location_gist` 통일), 가드 문서화·DB-free 단위 테스트; ruff 통과·pytest 130 passed/8 skipped(오프라인); 라이브 게이트(Engine 가용→npipe 부재 1회 확인) 상태. (커밋: 작업 보고 참조)
+- 갱신: 2026-11-27 — P2-STORE-01: StoreDiscovery 최초 구현(로컬·DB-free): `app/discovery/` 계약·공급자 인터페이스·실행 로직·합성 공급자, `tests/test_store_discovery.py` 44 passed·8 skipped(전체 기본 스위트 194 passed/8 skipped — DATABASE_URL 미설정 6·opt-in 격리 2, warning 1 기존 non-fatal), Ruff 통과·포맷 정상; 물리 스키마·실제 공급자 연동 없음(별도 승인 사안). git: 로컬 전용 커밋, `b28e576` 이후 로컬 시리즈(커밋 ID는 작업 보고). 핸드오프 v21 반영.
 
 ## M. P1-DATA-01 — 1차 도메인 스키마 구현(2026-11-21, 로컬·미적용)
 
@@ -197,11 +200,21 @@
 - **P5**: `_check_live_server` 문서화(NULL=로컬 소켓 허용, 브리지/비공개 peer는 프로젝트 귀속 불가로 거부 — 불확실 시 미시작 유지) + DB-free 단위 테스트(루프백/NULL 수용, 비공개 peer 거부 시 주소 비결출, 서버 식별·CREATE 권한 부재 거부). 가드 약화 없음.
 
 **N.2 오프라인 검증(실측)** — ruff All checks passed; 수정 파일 포맷 통과; 오프라인 `alembic upgrade head --sql` rc 0: 도메인 6 CREATE·프로브 DROP·`CREATE INDEX ix_stores_location_gist` 1건, 암시 `idx_stores_location` 없음. `pytest -q` **150 passed, 8 skipped**, 1 warning(기존 non-fatal; skip 구성: DATABASE_URL 미설정 6·opt-in 격리 2).
+(2026-11-27: 이후 P2-STORE-01 DB-free 테스트 44건 추가로 기본 스위트 **194 passed, 8 skipped**, 1 warning(기존 non-fatal).)
 
 **N.3 라이브 게이트 — 11-23~26 시도 경과·최종 결과** — 11-23~24: 가드 피어 정책 불일치(`inet_client_addr()`=`172.18.0.1` 브리지 게이트웨이·`IPv4Address` 객체) 및 Engine 플래핑으로 중단 — 조건부 허용 구현(§N.1)·DB-free 단위 검증 통과, 라이브 메타데이터 양성 확인·미도달, 스크래치 미생성·잔존 없음·개발 DB 불변, 002 미적용. 11-25 재구성: **제한 조건 전부 성립 — 프로젝트 컨테이너·이미지·Compose 프로젝트/서비스·게시 바인딩·게이트웨이 양성 확인 후 `_isolated_roundtrip` 라이브 통과(rc 0)** — 격리 왕복 001→002→001→002·도메인 6·FK/CHECK 위반(SQLSTATE·constraint_name 단언)·geography/ST_DWithin·단일 GiST·ORM 메타데이터 대조·삭제·잔존 0·개발 DB 사전·사후 불변 — 실전 검증에서 제약 테스트 문법(소스 UUID)·geography 단언 결함 발견·수정(§2/§N.2). 11-25 통합 테스트 **77 passed, 2 skipped**(opt-in 격리 2 = 기본 비활성; 1 warning 기존 non-fatal), 사전 게이트 OK → **(로컬 백업: 컨테이너 `pg_dump` 커스텀 덤프 + `pg_restore --list` 확인) → `upgrade head`(다운그레이드 미사용) → 사후 전부 OK**: rev **002**, 도메인 6테이블, 프로브 삭제, 단일 `ix_stores_location_gist`, FK(1/1/3/1)·CHECK(0/1/2/0 — stores CHECK 없음은 설계), `alembic_version`=1·`spatial_ref_sys`=8,500(관측 차원), ORM 부분집합, 단일 리비전 행, 데이터 무변경. 11-26 말미 Engine 재단절(flapping)로 **컨테이너 상태·health 재확인만 미완**(데이터·볼륨 불변; 적용 검증엔 영향 없음 — 적용·검증은 연결 안정 시점에 수행·확인됨). `docker/.env` 이름만 확인(값 비노출).
 
 **N.4 다음/사용자 확인** — ① 조건부 허용 정책: **승인·구현·DB-free 검증 완료**(메타데이터 양성 확인 시에만 피어 허용, 하드코딩·대역 일괄·원격 자동 허용 없음) → 11-25 라이브 격리 왕복·통합 테스트·사전 게이트·백업·002 적용·사후 검증 **전부 통과** ② (선택) Docker 재기동 시 컨테이너·health 상태 재확인 — 적용 검증엔 불필요(완료) ③ push 여부 결정(로컬 전용 커밋, 기본 미실행) ④ (사용자 결정) P1-DATA-01 종료 선언·StoreDiscovery 등 다음 서비스 기능 착수 — 티켓 목표(전체 검증·적용) 충족 ⑤ 원격 ref: 최근 확인 `9a7ecd5`·로컬 추적 `2150225`·HEAD `2a2b856`(시간순·세션 중 불변, fetch·push 없음).
+**2026-11-27 재확인(⑤ 정정)**: 로컬 `develop`=로컬 추적 ref `origin/develop`=`b28e576`; 네트워크 원격 값은 이 세션 미조회(`미확인`). 이 세션 fetch·push·원격 쓰기 없음; 원격 대비 로컬 선행 여부는 재확인 필요(관측치: 추적 ref 기준 count 0).
 - 갱신: 2026-11-23 — §N.3: 최종 실DB 검증 시도 — 읽기 전용 사전점검·서버/컨테이너 식별·PostGIS/권한 확인; 격리 왕복은 가드 피어 정책(루프백/NULL)과 Docker 게시 포트 토폴로지(관측 `172.18.0.1`·`IPv4Address`) 불일치로 차단 → 스크래치 미생성·잔존 없음·개발 DB 불변·002 미적용. URL 렌더 계약·`current_database()` 검증·피어 정규화 테스트 추가. 게이트: 피어 정책 결정(사용자).
 - 갱신: 2026-11-24 — §2 확정 테스트 문법 수정(소스 UUID 명시·FK/CHECK 검증 정확성: FK는 의도적 미존재 대상+유효 target, CHECK는 FK/NOT NULL 충족 상태에서 검사·SQLSTATE/constraint_name 단언·scratch 전용)과 geography 단언 수정(`geography(Point,4326)` 형식 단언) — 라이브 도달 시 결함 실전 발견·수정, DB-free 회귀 통과(pytest 150 passed/8 skipped). 라이브 재실행은 Engine 플래핑으로 일관성 완료 불가 — 메타데이터 단계 중단 시도(npipe 부재)·제약 단계 통과 후 geography 단언 실패 시도 혼재, 스크래치 미생성·잔존 없음·개발 DB 불변·002 미적용. 게이트: Engine 안정화 후 재시도. (커밋: 작업 보고 참조)
 - 갱신: 2026-11-25 — §2 확정 테스트 문법 수정: 소스 UUID 명시·FK/CHECK 검증 정확성(FK는 의도적 미존재 대상+유효 target, CHECK는 FK/NOT NULL 충족 상태에서 검사·SQLSTATE/constraint_name 단언·scratch 전용)과 geography 단언 수정(`geography(Point,4326)` 형식 단언). 라이브 도달 시 결함 실전 발견·수정, DB-free 회귀 통과.
 - 갱신: 2026-11-26 — 최종 실DB 라운드 종결: 사전 게이트 OK → 백업(컨테이너 pg_dump 커스텀 덤프 + `pg_restore --list` 확인) → `upgrade head`(다운그레이드 미사용, 로컬 전용) → 사후 검증 전부 OK — dev DB `4ddalla` rev **002**, 도메인 6테이블, 단일 `ix_stores_location_gist`, FK(1/1/3/1)·CHECK(0/1/2/0 — stores CHECK 없음은 설계), `alembic_version`=1·`spatial_ref_sys`=8,500(관측 차원), 잔여 스크래치 0(왕복 rc 0). 11-26 말미 Engine 재단절(플래핑)로 컨테이너·health 재확인만 미완(불변, 적용 검증엔 영향 없음).
+
+## O. P2-STORE-01 — StoreDiscovery 최초 구현(2026-11-27, 로컬·DB-free)
+
+- 범위: ENGINE_SPEC §3 입력(지역·중심점·800/1000m 반경·업종·허용 공급자)·출력(후보·공급자 외부 참조·중복 가능성·식별 근거·데이터 사용/보존 권한·실행 상태/구조화 오류) 계약을 Pydantic으로 정의하고, 교체 가능한 공급자 인터페이스·실행 로직·합성 테스트 공급자 구현. 실제 장소 공급자 선택(OPEN-001)·네트워크/비용·물리 저장은 범위 밖(미정/별도 승인).
+- 파일: `app/discovery/`(`contracts.py` 계약, `providers.py` 프로토콜+합성 공급자, `coordinator.py` 실행 로직, `__init__.py` 재수출), `tests/test_store_discovery.py`(DB-free), `Docs/P2-STORE-01-data-model-review.md`(데이터 모델 검토 문서 전용 — DDL/리비전 없음).
+- 계약 요점: 반경 800/1000만 허용·좌표 strict 검증(불리언·문자열 거부)·미지 필드 거부(공유 계약 기반); 후보 `candidate_id`는 엔진 생성 UUID(내부 엔티티 PK 아님), 공급자 외부 ID는 참조로만; 동일 공급자 외부 ID 반복 = 중복 신호, 동명 비병합, 공급자 간 중복 페어링 키 미정의(추정 금지); 미확인 데이터 사용권(UNKNOWN)은 후보 차단+이슈; 빈 결과=성공과 실패 구분; 공급자 오류/계약 위반은 이슈+상태(PARTIAL/FAILED), 부분성공 처리.
+- 검증(2026-11-27): pytest `tests/test_store_discovery.py` 44 passed(수정 반영 후 최종 실행), Ruff check/format 통과. 데이터 모델 검토는 `Docs/P2-STORE-01-data-model-review.md`.
+- 보호·정책: `ses1`·`Docs/draft.md` 미변경; 실제 공급자 선정·데이터 수집·저장·공개 없음; 신규 마이그레이션 없음; Docker 불필요(테스트)·컨테이너 무접촉; 비밀정보 비기록.
