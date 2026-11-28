@@ -8,7 +8,9 @@ Execution contract (self-contained so DB-free tests pin the behaviour):
 - pagination safety: visited page tokens are tracked per provider; a repeated
   token (self-repeat or cycle) stops that provider with a structured issue, and
   a configured per-provider page-call budget (explicit setting; ``None`` = no
-  engine cap, provider's own limits still apply) stops pagination when exceeded;
+  engine cap, provider's own limits still apply; **a real network provider will
+  require a finite budget — values stay undecided until OPEN-001 research is
+  approved**) stops pagination when exceeded;
 - a provider stop after earlier pages keeps the candidates already validated
   from those pages — only unvalidated data is dropped;
 - each returned page is validated in full (page/contract metadata **and** every
@@ -22,13 +24,15 @@ Execution contract (self-contained so DB-free tests pin the behaviour):
 - cross-provider duplicate pairing is explicitly NOT performed: no shared
   identity key exists (``CROSS_PROVIDER_DUPLICATE_KEY_UNDEFINED``);
 - empty result (providers OK, zero candidates) is valid SUCCESS — distinct from
-  FAILED/PARTIAL via status and issues;
-- status: SUCCESS = every requested scope completed normally (0 results
-  included); PARTIAL = at least one scope completed and at least one not
-  completed (error, rights limit, budget, token stop); RESTRICTED = nothing
-  completed and every requested target rights-blocked; FAILED = nothing
-  completed normally and at least one failure/incomplete stop. ``UNCHANGED`` is
-  not used for discovery runs.
+  FAILED/PARTIAL via status and issues; a valid but empty page counts as a
+  normally handled page, while a page that fails contract validation never does;
+- status separates supplier-scope completion from whether valid data was
+  obtained: SUCCESS = every requested scope completed normally (0 results
+  included); PARTIAL = valid pages/results or a completed scope exist and at
+  least one scope is not completed (error, rights limit, budget, token stop);
+  RESTRICTED = no scope completed and every requested target was rights-blocked;
+  FAILED = no valid page and no completed scope, with at least one failure or
+  incomplete stop. ``UNCHANGED`` is not used for discovery runs.
 
 Category consistency between requested 업종 and provider-returned 업종 cannot
 be validated generically yet: neither side's taxonomy is fixed (업종 분류
@@ -141,7 +145,13 @@ class StoreDiscovery:
         candidates: list[StoreCandidate] = []
         issues: list[ExecutionIssue] = []
         kept: dict[tuple[str, str], StoreCandidate] = {}
+        # Completion is tracked per requested scope (provider id), independently of
+        # how many candidates resulted: a scope that completed normally — even with
+        # zero (valid, empty) pages/results — counts as completed. ``valid_pages``
+        # counts validated pages so "valid data obtained, later page failed" stays
+        # distinguishable from "nothing valid obtained at all".
         completed = failed = blocked = incomplete = 0
+        valid_pages = 0
 
         for provider_id in provider_ids:
             provider = self._providers[provider_id]
@@ -198,6 +208,7 @@ class StoreDiscovery:
                         )
                     )
                     _check_page_contract(provider, page)
+                    valid_pages += 1
                     for place in page.places:
                         key = (provider_id, place.external_id)
                         if key in kept:
@@ -248,11 +259,14 @@ class StoreDiscovery:
             else:
                 incomplete += 1
 
-        if completed == 0 and (failed > 0 or incomplete > 0):
-            status = ExecutionStatus.FAILED
-        elif completed == 0 and blocked == len(provider_ids):
+        if provider_ids and blocked == len(provider_ids):
+            # Every requested target was rights-blocked; nothing could run.
             status = ExecutionStatus.RESTRICTED
-        elif failed > 0 or incomplete > 0 or blocked > 0:
+        elif valid_pages == 0 and completed == 0 and (failed > 0 or incomplete > 0):
+            # No valid page and no normally completed scope, but execution did
+            # fail/stop somewhere — never "upgrade" this to PARTIAL.
+            status = ExecutionStatus.FAILED
+        elif completed < len(provider_ids):
             status = ExecutionStatus.PARTIAL
         else:
             status = ExecutionStatus.SUCCESS

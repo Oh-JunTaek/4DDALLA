@@ -415,7 +415,7 @@ def test_page_budget_limits_calls_and_keeps_earlier_candidates() -> None:
         "syn-cafe-near",
         "syn-brunch-mid",
     ]
-    assert result.status is ExecutionStatus.FAILED
+    assert result.status is ExecutionStatus.PARTIAL
     assert [issue.error_code for issue in result.issues] == [
         "pagination.budget_exhausted"
     ]
@@ -439,7 +439,7 @@ def test_page_budget_must_be_positive_int_or_none() -> None:
         StoreDiscovery({}, page_budget=True)  # type: ignore[arg-type]
 
 
-def test_repeated_page_token_stops_provider_and_keeps_candidates() -> None:
+def test_repeated_page_token_stops_provider_keeps_earlier_candidates() -> None:
     provider = _RepeatTokenProvider()
     result = StoreDiscovery({"repeat-token": provider}).execute(
         make_input(providers=("repeat-token",))
@@ -449,7 +449,7 @@ def test_repeated_page_token_stops_provider_and_keeps_candidates() -> None:
         "syn-repeat-0",
         "syn-repeat-1",
     ]
-    assert result.status is ExecutionStatus.FAILED
+    assert result.status is ExecutionStatus.PARTIAL
     assert [issue.error_code for issue in result.issues] == ["pagination.token_repeat"]
 
 
@@ -463,6 +463,12 @@ def test_multi_token_cycle_is_detected() -> None:
         "tokA",
         "tokB",
     ]
+    assert [ref.external_id for c in result.candidates for ref in c.provider_refs] == [
+        "syn-cycle-1",
+        "syn-cycle-2",
+        "syn-cycle-3",
+    ]
+    assert result.status is ExecutionStatus.PARTIAL
     assert [issue.error_code for issue in result.issues] == ["pagination.token_repeat"]
 
 
@@ -494,19 +500,62 @@ def test_place_provider_id_mismatch_rejects_page_without_candidates() -> None:
     ]
 
 
-def test_failure_after_first_page_keeps_earlier_candidates() -> None:
+def test_failure_after_first_page_keeps_earlier_candidates_is_partial() -> None:
     provider = _FirstPageThenFailProvider()
     result = StoreDiscovery({"flaky": provider}).execute(
         make_input(providers=("flaky",))
     )
     assert provider.calls == 2
-    assert result.status is ExecutionStatus.FAILED
+    assert result.status is ExecutionStatus.PARTIAL
     assert [ref.external_id for c in result.candidates for ref in c.provider_refs] == [
         "syn-page-1"
     ]
     assert [issue.error_code for issue in result.issues] == ["transport_down"]
     assert result.issues[0].retryable is True
     assert "private-detail-xyz" not in result.model_dump_json()
+
+
+class _EmptyFirstPageThenFailProvider:
+    """First page is valid but empty; the second call fails.
+
+    An empty validated page is a normally handled page, so this stays PARTIAL
+    rather than FAILED.
+    """
+
+    contract_version = "1.0.0"
+    data_use = DataUseRights.STORE_ALLOWED
+    provider_id = "empty-then-fail"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def search(self, request: ProviderSearchRequest) -> ProviderSearchPage:
+        self.calls += 1
+        if self.calls == 1:
+            return ProviderSearchPage(
+                provider_id=self.provider_id,
+                contract_version=self.contract_version,
+                places=(),
+                next_page_token="page-2",
+            )
+        raise ProviderExecutionError(
+            "private-empty-fail-detail",
+            provider_id=self.provider_id,
+            error_code="transport_down",
+            retryable=True,
+        )
+
+
+def test_empty_valid_first_page_then_failure_is_partial() -> None:
+    provider = _EmptyFirstPageThenFailProvider()
+    result = StoreDiscovery({"empty-then-fail": provider}).execute(
+        make_input(providers=("empty-then-fail",))
+    )
+    assert provider.calls == 2
+    assert result.candidates == []
+    assert result.status is ExecutionStatus.PARTIAL
+    assert [issue.error_code for issue in result.issues] == ["transport_down"]
+    assert "private-empty-fail-detail" not in result.model_dump_json()
 
 
 def test_all_targets_rights_blocked_is_restricted() -> None:
